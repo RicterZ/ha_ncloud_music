@@ -75,23 +75,32 @@ class CloudMusicSearchButton(CloudMusicButton):
     async def async_press(self) -> None:
         """执行搜索操作"""
         # 1. 读取 Text 实体的搜索关键词
-        text_entity_id = f"text.{DOMAIN}_{self._entry.entry_id}_{ENTITY_NAME_SEARCH_INPUT}"
+        # 注意：entity_id 格式为 text.{集成名}_{实体名}
+        text_entity_id = f"text.{manifest.name.lower().replace(' ', '_')}_{ENTITY_NAME_SEARCH_INPUT}"
         text_state = self.hass.states.get(text_entity_id)
         
         if text_state is None:
             _LOGGER.warning(f"搜索输入实体 {text_entity_id} 不存在")
-            self.hass.components.persistent_notification.create(
-                "搜索输入实体未找到，请重新加载集成",
-                title="云音乐搜索失败"
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": "搜索输入实体未找到，请重新加载集成",
+                    "title": "云音乐搜索失败"
+                }
             )
             return
 
         keyword = text_state.state
         if not keyword or keyword.strip() == "":
             _LOGGER.info("搜索关键词为空，跳过搜索")
-            self.hass.components.persistent_notification.create(
-                "请先输入搜索关键词",
-                title="云音乐搜索提示"
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": "请先输入搜索关键词",
+                    "title": "云音乐搜索提示"
+                }
             )
             return
 
@@ -110,9 +119,13 @@ class CloudMusicSearchButton(CloudMusicButton):
             
             if res.get('code') != 200:
                 _LOGGER.warning(f"搜索 API 返回异常: {res}")
-                self.hass.components.persistent_notification.create(
-                    f"搜索失败: {res.get('message', '未知错误')}",
-                    title="云音乐搜索失败"
+                await self.hass.services.async_call(
+                    "persistent_notification",
+                    "create",
+                    {
+                        "message": f"搜索失败: {res.get('message', '未知错误')}",
+                        "title": "云音乐搜索失败"
+                    }
                 )
                 return
 
@@ -126,9 +139,13 @@ class CloudMusicSearchButton(CloudMusicButton):
                 self.hass.data[search_data_key][DATA_KEYWORD] = keyword
                 self.hass.data[search_data_key][DATA_LAST_UPDATE] = time.time()
                 
-                self.hass.components.persistent_notification.create(
-                    f"未找到相关歌曲: {keyword}",
-                    title="云音乐搜索结果"
+                await self.hass.services.async_call(
+                    "persistent_notification",
+                    "create",
+                    {
+                        "message": f"未找到相关歌曲: {keyword}",
+                        "title": "云音乐搜索结果"
+                    }
                 )
                 return
 
@@ -156,16 +173,24 @@ class CloudMusicSearchButton(CloudMusicButton):
             self.hass.data[search_data_key][DATA_LAST_UPDATE] = time.time()
 
             _LOGGER.info(f"搜索成功，找到 {len(music_list)} 首歌曲")
-            self.hass.components.persistent_notification.create(
-                f"找到 {len(music_list)} 首相关歌曲，请在搜索结果中选择播放",
-                title=f'搜索"{keyword}"成功'
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": f"找到 {len(music_list)} 首相关歌曲，请在搜索结果中选择播放",
+                    "title": f'搜索"{keyword}"成功'
+                }
             )
 
         except Exception as e:
             _LOGGER.error(f"搜索过程中出错: {e}", exc_info=True)
-            self.hass.components.persistent_notification.create(
-                f"搜索出错: {str(e)}",
-                title="云音乐搜索失败"
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": f"搜索出错: {str(e)}",
+                    "title": "云音乐搜索失败"
+                }
             )
 
 
@@ -215,9 +240,13 @@ async def _play_media(self, media_id: str, playlist_name: str) -> None:
 
     if media_player_entity_id is None:
         _LOGGER.warning("未找到云音乐媒体播放器")
-        self.hass.components.persistent_notification.create(
-            "未找到云音乐媒体播放器，请先配置媒体播放器",
-            title="播放失败"
+        await self.hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "message": "未找到云音乐媒体播放器，请先配置媒体播放器",
+                "title": "播放失败"
+            }
         )
         return
 
@@ -237,9 +266,13 @@ async def _play_media(self, media_id: str, playlist_name: str) -> None:
         _LOGGER.info(f"{playlist_name} 播放成功")
     except Exception as e:
         _LOGGER.error(f"播放 {playlist_name} 失败: {e}", exc_info=True)
-        self.hass.components.persistent_notification.create(
-            f"播放失败: {str(e)}",
-            title=f"{playlist_name}播放错误"
+        await self.hass.services.async_call(
+            "persistent_notification",
+            "create",
+            {
+                "message": f"播放失败: {str(e)}",
+                "title": f"{playlist_name}播放错误"
+            }
         )
 
 

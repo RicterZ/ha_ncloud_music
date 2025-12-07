@@ -152,9 +152,13 @@ class CloudMusicSearchResults(SelectEntity):
         music_info = self._music_map.get(option)
         if music_info is None:
             _LOGGER.warning(f"未找到选项对应的歌曲信息: {option}")
-            self.hass.components.persistent_notification.create(
-                f"歌曲信息丢失: {option}",
-                title="播放失败"
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": f"歌曲信息丢失: {option}",
+                    "title": "播放失败"
+                }
             )
             return
 
@@ -168,9 +172,13 @@ class CloudMusicSearchResults(SelectEntity):
 
         if media_player_entity_id is None:
             _LOGGER.warning("未找到云音乐媒体播放器")
-            self.hass.components.persistent_notification.create(
-                "未找到云音乐媒体播放器，请先配置媒体播放器",
-                title="播放失败"
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": "未找到云音乐媒体播放器，请先配置媒体播放器",
+                    "title": "播放失败"
+                }
             )
             return
 
@@ -191,14 +199,22 @@ class CloudMusicSearchResults(SelectEntity):
             _LOGGER.info(f"开始播放: {music_info.singer} - {music_info.song}")
             
             # 可选：显示友好通知
-            self.hass.components.persistent_notification.create(
-                f"正在播放: {music_info.singer} - {music_info.song}",
-                title="云音乐播放"
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": f"正在播放: {music_info.singer} - {music_info.song}",
+                    "title": "云音乐播放"
+                }
             )
             
         except Exception as e:
             _LOGGER.error(f"播放歌曲失败: {e}", exc_info=True)
-            self.hass.components.persistent_notification.create(
-                f"播放失败: {str(e)}",
-                title="云音乐播放错误"
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": f"播放失败: {str(e)}",
+                    "title": "云音乐播放错误"
+                }
             )
