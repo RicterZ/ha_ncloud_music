@@ -63,6 +63,7 @@ class CloudMusicRouter():
     album_playlist = f'{cloudmusic_protocol}album/playlist'
     radio_playlist = f'{cloudmusic_protocol}radio/playlist'
     artist_playlist = f'{cloudmusic_protocol}artist/playlist'
+    search_results = f'{cloudmusic_protocol}search/results'
 
     my_login = f'{cloudmusic_protocol}my/login'
     my_daily = f'{cloudmusic_protocol}my/daily'
