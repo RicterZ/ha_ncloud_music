@@ -168,6 +168,21 @@ async def async_browse_media(media_player, media_content_type, media_content_id)
             
             
 
+
+        # 检查是否有搜索结果，添加入口
+        from .manifest import manifest
+        DOMAIN = manifest.domain
+        if DOMAIN in hass.data and 'last_search' in hass.data[DOMAIN]:
+            search_data = hass.data[DOMAIN]['last_search']
+            keyword = search_data.get('keyword', '未知')
+            type_name = search_data.get('type_name', '未知')
+            children.insert(0, {
+                'title': f'🔍 搜索结果: {keyword} ({type_name})',
+                'path': CloudMusicRouter.search_results,
+                'type': MediaType.PLAYLIST,
+                'thumbnail': 'https://p1.music.126.net/kMuXXbwHbduHpLYDmHXrlA==/109951168152833223.jpg'
+            })
+
         # 扩展资源
         children.extend([
             {
@@ -228,6 +243,65 @@ async def async_browse_media(media_player, media_content_type, media_content_id)
 
     title = query.get('title')
     id = query.get('id')
+
+
+    
+    elif media_content_id.startswith(CloudMusicRouter.search_results):
+        
+        # 显示搜索结果
+        from .manifest import manifest
+        DOMAIN = manifest.domain
+        
+        search_data = hass.data.get(DOMAIN, {}).get('last_search', {})
+        results = search_data.get('results', [])
+        search_type = search_data.get('type')
+        keyword = search_data.get('keyword', '未知')
+        
+        from .const import SEARCH_TYPE_SONG
+        
+        library_info = BrowseMedia(
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=media_content_id,
+            media_content_type=MediaType.PLAYLIST,
+            title=f'搜索结果: {keyword}',
+            can_play=False,
+            can_expand=True,
+            children=[],
+        )
+        
+        for item in results:
+            # 跳过提示项
+            if isinstance(item, dict) and item.get('is_hint'):
+                continue
+            
+            # 歌曲类型：MusicInfo对象
+            if hasattr(item, 'singer'):
+                library_info.children.append(
+                    BrowseMedia(
+                        media_class=MediaClass.TRACK,
+                        media_content_id=item.url,
+                        media_content_type=MediaType.MUSIC,
+                        title=f'{item.song} - {item.singer}',
+                        can_play=True,
+                        can_expand=False,
+                        thumbnail=item.picUrl
+                    )
+                )
+            # 歌单/专辑/歌手/电台：字典格式
+            else:
+                library_info.children.append(
+                    BrowseMedia(
+                        media_class=MediaClass.PLAYLIST,
+                        media_content_id=item['media_uri'],
+                        media_content_type=MediaType.MUSIC,
+                        title=item['name'],
+                        can_play=True,
+                        can_expand=True,
+                        thumbnail=item.get('cover', '')
+                    )
+                )
+        
+        return library_info
 
     if media_content_id.startswith(CloudMusicRouter.local_playlist):
         # 本地播放列表
@@ -732,6 +806,65 @@ async def async_play_media(media_player, cloud_music, media_content_id):
     id = query.get('id')
     # 通用搜索关键词
     keywords = query.get('kv')
+
+
+    
+    elif media_content_id.startswith(CloudMusicRouter.search_results):
+        
+        # 显示搜索结果
+        from .manifest import manifest
+        DOMAIN = manifest.domain
+        
+        search_data = hass.data.get(DOMAIN, {}).get('last_search', {})
+        results = search_data.get('results', [])
+        search_type = search_data.get('type')
+        keyword = search_data.get('keyword', '未知')
+        
+        from .const import SEARCH_TYPE_SONG
+        
+        library_info = BrowseMedia(
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=media_content_id,
+            media_content_type=MediaType.PLAYLIST,
+            title=f'搜索结果: {keyword}',
+            can_play=False,
+            can_expand=True,
+            children=[],
+        )
+        
+        for item in results:
+            # 跳过提示项
+            if isinstance(item, dict) and item.get('is_hint'):
+                continue
+            
+            # 歌曲类型：MusicInfo对象
+            if hasattr(item, 'singer'):
+                library_info.children.append(
+                    BrowseMedia(
+                        media_class=MediaClass.TRACK,
+                        media_content_id=item.url,
+                        media_content_type=MediaType.MUSIC,
+                        title=f'{item.song} - {item.singer}',
+                        can_play=True,
+                        can_expand=False,
+                        thumbnail=item.picUrl
+                    )
+                )
+            # 歌单/专辑/歌手/电台：字典格式
+            else:
+                library_info.children.append(
+                    BrowseMedia(
+                        media_class=MediaClass.PLAYLIST,
+                        media_content_id=item['media_uri'],
+                        media_content_type=MediaType.MUSIC,
+                        title=item['name'],
+                        can_play=True,
+                        can_expand=True,
+                        thumbnail=item.get('cover', '')
+                    )
+                )
+        
+        return library_info
 
     if media_content_id.startswith(CloudMusicRouter.local_playlist):
         media_player.playindex = playindex

@@ -257,8 +257,23 @@ class CloudMusicSearchButton(CloudMusicButton):
                     
             _LOGGER.info(f"已格式化 {len(music_list)} 条{item_type_name}结果")
 
-            # 6. 存储到共享数据
+            # 6. 存储到共享数据（供Media Browser使用）
             search_data_key = f'{DOMAIN}_{self._entry.entry_id}_search_data'
+            
+            # 同时存储到标准位置供Media Browser读取
+            if DOMAIN not in self.hass.data:
+                self.hass.data[DOMAIN] = {}
+            
+            from datetime import datetime
+            self.hass.data[DOMAIN]['last_search'] = {
+                'keyword': keyword,
+                'type': search_key,
+                'type_name': item_type_name,
+                'results': music_list,
+                'timestamp': datetime.now()
+            }
+            
+            # 保留原有存储逻辑
             self.hass.data[search_data_key][DATA_SEARCH_RESULTS] = music_list
             self.hass.data[search_data_key][DATA_KEYWORD] = keyword
             self.hass.data[search_data_key][DATA_SEARCH_TYPE] = search_key
