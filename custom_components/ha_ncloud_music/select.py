@@ -111,7 +111,7 @@ class CloudMusicSearchResults(SelectEntity):
 
         if not music_list:
             # 空结果
-            self._attr_options = [f"未找到"{keyword}"的搜索结果"]
+            self._attr_options = [f'未找到"{keyword}"的搜索结果']
             self._attr_current_option = self._attr_options[0]
             self._music_map = {}
             _LOGGER.debug("搜索结果为空，清空选项列表")
