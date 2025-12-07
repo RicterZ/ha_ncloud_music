@@ -63,7 +63,8 @@ class CloudMusicRouter():
     album_playlist = f'{cloudmusic_protocol}album/playlist'
     radio_playlist = f'{cloudmusic_protocol}radio/playlist'
     artist_playlist = f'{cloudmusic_protocol}artist/playlist'
-    search_results = f'{cloudmusic_protocol}search/results'
+    search_results = f'{cloudmusic_protocol}search/results'
+
 
     my_login = f'{cloudmusic_protocol}my/login'
     my_daily = f'{cloudmusic_protocol}my/daily'
@@ -722,6 +723,86 @@ async def async_browse_media(media_player, media_content_type, media_content_id)
         return library_info
 
     #================= FM
+
+    # 处理专辑播放列表
+    if media_content_id.startswith(CloudMusicRouter.album_playlist):
+        library_info = BrowseMedia(
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=media_content_id,
+            media_content_type=MediaType.PLAYLIST,
+            title=title or '专辑',
+            can_play=True,
+            can_expand=False,
+            children=[],
+        )
+        playlist = await cloud_music.async_get_album(id)
+        for index, music_info in enumerate(playlist):
+            library_info.children.append(
+                BrowseMedia(
+                    title=f'{music_info.song} - {music_info.singer}',
+                    media_class=MediaClass.MUSIC,
+                    media_content_type=MediaType.PLAYLIST,
+                    media_content_id=f"{media_content_id}&index={index}",
+                    can_play=True,
+                    can_expand=False,
+                    thumbnail=music_info.thumbnail
+                )
+            )
+        return library_info
+
+    # 处理歌手播放列表
+    if media_content_id.startswith(CloudMusicRouter.artist_playlist):
+        library_info = BrowseMedia(
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=media_content_id,
+            media_content_type=MediaType.PLAYLIST,
+            title=title or '歌手',
+            can_play=True,
+            can_expand=False,
+            children=[],
+        )
+        playlist = await cloud_music.async_get_artists(id)
+        for index, music_info in enumerate(playlist):
+            library_info.children.append(
+                BrowseMedia(
+                    title=f'{music_info.song} - {music_info.singer}',
+                    media_class=MediaClass.MUSIC,
+                    media_content_type=MediaType.PLAYLIST,
+                    media_content_id=f"{media_content_id}&index={index}",
+                    can_play=True,
+                    can_expand=False,
+                    thumbnail=music_info.thumbnail
+                )
+            )
+        return library_info
+
+    # 处理电台播放列表
+    if media_content_id.startswith(CloudMusicRouter.radio_playlist):
+        library_info = BrowseMedia(
+            media_class=MediaClass.DIRECTORY,
+            media_content_id=media_content_id,
+            media_content_type=MediaType.PLAYLIST,
+            title=title or '电台',
+            can_play=True,
+            can_expand=False,
+            children=[],
+        )
+        playlist = await cloud_music.async_get_djradio(id)
+        for index, music_info in enumerate(playlist):
+            library_info.children.append(
+                BrowseMedia(
+                    title=f'{music_info.song} - {music_info.singer}',
+                    media_class=MediaClass.MUSIC,
+                    media_content_type=MediaType.PLAYLIST,
+                    media_content_id=f"{media_content_id}&index={index}",
+                    can_play=True,
+                    can_expand=False,
+                    thumbnail=music_info.thumbnail
+                )
+            )
+        return library_info
+
+
     if media_content_id.startswith(CloudMusicRouter.fm_channel):
 
         library_info = BrowseMedia(
