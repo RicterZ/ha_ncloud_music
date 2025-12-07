@@ -19,6 +19,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api_url = data.get(CONF_URL)
     vip_url = entry.options.get(CONF_URL, '')
     hass.data['cloud_music'] = CloudMusic(hass, api_url, vip_url)
+    
+    # 初始化共享搜索数据存储（用于 text、button、select 实体间的数据共享）
+    from .const import DATA_SEARCH_RESULTS, DATA_LAST_UPDATE, DATA_KEYWORD
+    search_data_key = f'{DOMAIN}_{entry.entry_id}_search_data'
+    hass.data[search_data_key] = {
+        DATA_SEARCH_RESULTS: [],
+        DATA_LAST_UPDATE: 0,
+        DATA_KEYWORD: ''
+    }
 
     hass.http.register_view(HttpView)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
