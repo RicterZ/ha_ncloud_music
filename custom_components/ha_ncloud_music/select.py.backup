@@ -126,20 +126,17 @@ class CloudMusicSearchResults(SelectEntity):
             new_options = []
             new_music_map = {}
             
-            for item in music_list:
-                # 检查是 MusicInfo 对象还是字典
-                if hasattr(item, 'singer'):  # MusicInfo 对象（歌曲）
-                    option_text = f"{item.singer} - {item.song}"
-                else:  # 字典（歌单/歌手/专辑/电台）
-                    option_text = item.get('name', '未知')
+            for music_info in music_list:
+                # 格式：歌手 - 歌名
+                option_text = f"{music_info.singer} - {music_info.song}"
                 new_options.append(option_text)
-                new_music_map[option_text] = item
+                new_music_map[option_text] = music_info
 
             self._attr_options = new_options
             self._attr_current_option = new_options[0] if new_options else "暂无搜索结果"
             self._music_map = new_music_map
             
-            _LOGGER.info(f"已更新搜索结果选项，共 {len(new_options)} 项")
+            _LOGGER.info(f"已更新搜索结果选项，共 {len(new_options)} 首歌曲")
 
         # 通知 Home Assistant 状态已更新
         self.async_write_ha_state()
@@ -211,70 +208,42 @@ class CloudMusicSearchResults(SelectEntity):
                     media_player_obj = entity
                     break
 
-        # 检查item类型：MusicInfo对象还是字典
-        if hasattr(music_info, 'singer'):  # MusicInfo 对象 - 直接播放歌曲
-            _LOGGER.info(f"准备播放歌曲: {music_info.song} - {music_info.singer}")
-            try:
-                # 设置 media_player 的 playlist 和 playindex
-                if media_player_obj:
-                    media_player_obj.playlist = [music_info]
-                    media_player_obj.playindex = 0
-                    _LOGGER.info(f"已设置 playlist: {music_info.song}, 封面: {music_info.picUrl}")
-                else:
-                    _LOGGER.warning("未找到 media_player 对象，直接使用 URL 播放")
+        # 使用原作者的 playlist 机制播放
+        # 这样可以保留封面图、歌词等信息，并加入播放列表
+        _LOGGER.info(f"准备播放选中歌曲: {music_info.song} - {music_info.singer}")
+        try:
+            # 设置 media_player 的 playlist 和 playindex
+            if media_player_obj:
+                media_player_obj.playlist = [music_info]
+                media_player_obj.playindex = 0
+                _LOGGER.info(f"已设置 playlist: {music_info.song}, 封面: {music_info.picUrl}")
+            else:
+                _LOGGER.warning("未找到 media_player 对象，直接使用 URL 播放")
 
-                # 使用 media_player 的 async_play_media 方法
-                await self.hass.services.async_call(
-                    MEDIA_PLAYER_DOMAIN,
-                    'play_media',
-                    {
-                        'entity_id': media_player_entity_id,
-                        'media_content_id': music_info.url,
-                        'media_content_type': MediaType.MUSIC,
-                    },
-                    blocking=True
-                )
-                _LOGGER.info(f"开始播放: {music_info.singer} - {music_info.song}")
-                
-            except Exception as e:
-                _LOGGER.error(f"播放歌曲失败: {e}", exc_info=True)
-                await self.hass.services.async_call(
-                    "persistent_notification",
-                    "create",
-                    {
-                        "message": f"播放失败: {str(e)}",
-                        "title": "云音乐播放错误"
-                    }
-                )
-        else:  # 字典 - 打开媒体库浏览
-            media_uri = music_info.get('media_uri', '')
-            item_name = music_info.get('name', '未知')
-            _LOGGER.info(f"准备打开媒体库: {item_name} -> {media_uri}")
+            # 使用 media_player 的 async_play_media 方法
+            # 传入 URL 让它使用我们刚设置的 playlist
+            await self.hass.services.async_call(
+                MEDIA_PLAYER_DOMAIN,
+                'play_media',
+                {
+                    'entity_id': media_player_entity_id,
+                    'media_content_id': music_info.url,
+                    'media_content_type': MediaType.MUSIC,
+                },
+                blocking=True
+            )
+            _LOGGER.info(f"开始播放: {music_info.singer} - {music_info.song}")
             
-            try:
-                # 调用 play_media 服务打开媒体库
-                await self.hass.services.async_call(
-                    MEDIA_PLAYER_DOMAIN,
-                    'play_media',
-                    {
-                        'entity_id': media_player_entity_id,
-                        'media_content_id': media_uri,
-                        'media_content_type': 'music',
-                    },
-                    blocking=True
-                )
-                _LOGGER.info(f"已打开媒体库: {media_uri}")
-                
-            except Exception as e:
-                _LOGGER.error(f"打开媒体库失败: {e}", exc_info=True)
-                await self.hass.services.async_call(
-                    "persistent_notification",
-                    "create",
-                    {
-                        "message": f"打开媒体库失败: {str(e)}",
-                        "title": "云音乐错误"
-                    }
-                )
+        except Exception as e:
+            _LOGGER.error(f"播放歌曲失败: {e}", exc_info=True)
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "message": f"播放失败: {str(e)}",
+                    "title": "云音乐播放错误"
+                }
+            )
 
 
 class CloudMusicSearchType(SelectEntity):

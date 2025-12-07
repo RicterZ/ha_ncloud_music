@@ -143,9 +143,29 @@ class CloudMusicSearchButton(CloudMusicButton):
                 )
                 return
 
-            # 4. 解析搜索结果
-            songs = res.get('result', {}).get('songs', [])
-            if not songs:
+            # 4. 根据搜索类型获取对应的结果字段
+            result_data = res.get('result', {})
+            
+            # 不同类型的API返回字段不同
+            if search_key == SEARCH_TYPE_SONG:
+                items = result_data.get('songs', [])
+                item_type_name = "歌曲"
+            elif search_key == SEARCH_TYPE_ALBUM:
+                items = result_data.get('albums', [])
+                item_type_name = "专辑"
+            elif search_key == SEARCH_TYPE_ARTIST:
+                items = result_data.get('artists', [])
+                item_type_name = "歌手"
+            elif search_key == SEARCH_TYPE_PLAYLIST:
+                items = result_data.get('playlists', [])
+                item_type_name = "歌单"
+            else:  # SEARCH_TYPE_RADIO
+                items = result_data.get('djRadios', [])
+                item_type_name = "电台"
+            
+            _LOGGER.debug(f"API返回了 {len(items)} 个{item_type_name}结果")
+            
+            if not items:
                 _LOGGER.info(f"未找到搜索结果: {keyword}")
                 # 存储空结果
                 search_data_key = f'{DOMAIN}_{self._entry.entry_id}_search_data'
@@ -158,29 +178,66 @@ class CloudMusicSearchButton(CloudMusicButton):
                     "persistent_notification",
                     "create",
                     {
-                        "message": f"未找到相关歌曲: {keyword}",
+                        "message": f"未找到相关{item_type_name}: {keyword}",
                         "title": "云音乐搜索结果"
                     }
                 )
                 return
 
-            # 5. 格式化结果（提取 ID、歌名、歌手）
+            # 5. 格式化结果 - 根据类型使用不同的处理方式
             from .models.music_info import MusicInfo, MusicSource
             music_list = []
-            for item in songs[:20]:  # 最多20条结果
-                song_id = item['id']
-                song_name = item['name']
-                singer_name = item['ar'][0]['name'] if item.get('ar') else '未知歌手'
-                album_name = item['al']['name'] if item.get('al') else ''
-                duration = item.get('dt', 0)
-                # 直接使用原始图片URL，不添加压缩参数（与 Media Browser 一致）
-                pic_url = item['al']['picUrl'] if item.get('al') else ''
-                
-                # 构建播放 URL（参考 cloud_music.py 中的 get_play_url 方法）
-                url = cloud_music.get_play_url(song_id, song_name, singer_name, MusicSource.PLAYLIST.value)
-                
-                music_info = MusicInfo(song_id, song_name, singer_name, album_name, duration, url, pic_url, MusicSource.PLAYLIST.value)
-                music_list.append(music_info)
+            
+            if search_key == SEARCH_TYPE_SONG:
+                # 歌曲类型：创建MusicInfo对象，可以直接播放
+                for item in items[:20]:
+                    song_id = item['id']
+                    song_name = item['name']
+                    singer_name = item['ar'][0]['name'] if item.get('ar') else '未知歌手'
+                    album_name = item['al']['name'] if item.get('al') else ''
+                    duration = item.get('dt', 0)
+                    pic_url = item['al']['picUrl'] if item.get('al') else ''
+                    url = cloud_music.get_play_url(song_id, song_name, singer_name, MusicSource.PLAYLIST.value)
+                    music_info = MusicInfo(song_id, song_name, singer_name, album_name, duration, url, pic_url, MusicSource.PLAYLIST.value)
+                    music_list.append(music_info)
+            else:
+                # 其他类型：存储基本信息和媒体库URI，选择后打开媒体库
+                for item in items[:20]:
+                    item_id = item['id']
+                    item_name = item['name']
+                    
+                    # 根据类型构建媒体库URI和显示名称
+                    if search_key == SEARCH_TYPE_PLAYLIST:
+                        media_uri = f"cloudmusic://163/playlist/{item_id}"
+                        cover_url = item.get('coverImgUrl', '')
+                        creator = item.get('creator', {}).get('nickname', '')
+                        display_name = f"{item_name} [{creator}]"
+                    elif search_key == SEARCH_TYPE_ARTIST:
+                        media_uri = f"cloudmusic://163/artists/{item_id}"
+                        cover_url = item.get('picUrl', '')
+                        album_size = item.get('albumSize', 0)
+                        display_name = f"{item_name} ({album_size}张专辑)"
+                    elif search_key == SEARCH_TYPE_ALBUM:
+                        media_uri = f"cloudmusic://163/playlist/{item_id}"  # 专辑也用playlist处理
+                        cover_url = item.get('picUrl', '')
+                        artist_name = item.get('artist', {}).get('name', '')
+                        display_name = f"{item_name} - {artist_name}"
+                    else:  # SEARCH_TYPE_RADIO
+                        media_uri = f"cloudmusic://163/djradio/{item_id}"
+                        cover_url = item.get('picUrl', '')
+                        display_name = item_name
+                    
+                    # 存储为字典格式（包含媒体库URI）
+                    item_info = {
+                        'id': item_id,
+                        'name': display_name,
+                        'type': search_key,
+                        'media_uri': media_uri,
+                        'cover': cover_url,
+                    }
+                    music_list.append(item_info)
+                    
+            _LOGGER.info(f"已格式化 {len(music_list)} 条{item_type_name}结果")
 
             # 6. 存储到共享数据
             search_data_key = f'{DOMAIN}_{self._entry.entry_id}_search_data'
