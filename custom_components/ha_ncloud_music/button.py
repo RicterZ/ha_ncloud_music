@@ -3,6 +3,7 @@
 """
 import logging
 import time
+from urllib.parse import quote
 from homeassistant.components.button import ButtonEntity
 from homeassistant.components.media_player import DOMAIN as MEDIA_PLAYER_DOMAIN, MediaType
 from homeassistant.config_entries import ConfigEntry
@@ -232,16 +233,16 @@ class CloudMusicSearchButton(CloudMusicButton):
                         song_count = item.get('trackCount', 0)
                         display_name = f"[歌单▶] {item_name} ({song_count}首) by {creator}"
                     elif search_key == SEARCH_TYPE_ALBUM:
-                        media_uri = f"cloudmusic://163/album/playlist?id={item_id}"
+                        media_uri = f"cloudmusic://163/album/playlist?id={item_id}&title={quote(item_name)}"
                         cover_url = item.get('picUrl', '')
                         artist = item.get('artist', {}).get('name', '未知歌手') if item.get('artist') else '未知歌手'
                         display_name = f"[专辑▶] {item_name} - {artist}"
                     elif search_key == SEARCH_TYPE_ARTIST:
-                        media_uri = f"cloudmusic://163/artist/playlist?id={item_id}"
+                        media_uri = f"cloudmusic://163/artist/playlist?id={item_id}&title={quote(item_name)}"
                         cover_url = item.get('picUrl', '')
                         display_name = f"[歌手▶] {item_name} (热门歌曲)"
                     else:  # SEARCH_TYPE_RADIO
-                        media_uri = f"cloudmusic://163/radio/playlist?id={item_id}"
+                        media_uri = f"cloudmusic://163/radio/playlist?id={item_id}&title={quote(item_name)}"
                         cover_url = item.get('picUrl', '')
                         display_name = f"[电台▶] {item_name}"
                     
