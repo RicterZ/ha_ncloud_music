@@ -184,29 +184,35 @@ class CloudMusicSearchResults(SelectEntity):
             )
             return
 
-        # 获取 media_player 实体对象（用于设置 playlist）
+        # 获取 CloudMusic 实例和 media_player 实体
         cloud_music = self.hass.data.get('cloud_music')
         if cloud_music is None:
             _LOGGER.error("CloudMusic 实例未找到")
             return
 
         # 查找 media_player 实体对象
+        # 使用 entity registry 来获取实体对象
         media_player_obj = None
-        for entity in self.hass.data.get('entity_components', {}).get(MEDIA_PLAYER_DOMAIN, []):
-            if entity.entity_id == media_player_entity_id:
-                media_player_obj = entity
-                break
+        entity_registry = self.hass.data.get("entity_components", {}).get(MEDIA_PLAYER_DOMAIN)
+        
+        if entity_registry:
+            # EntityComponent 有 entities 属性
+            for entity in entity_registry.entities:
+                if entity.entity_id == media_player_entity_id:
+                    media_player_obj = entity
+                    break
 
         # 使用原作者的 playlist 机制播放
         # 这样可以保留封面图、歌词等信息，并加入播放列表
         _LOGGER.info(f"准备播放选中歌曲: {music_info.song} - {music_info.singer}")
         try:
             # 设置 media_player 的 playlist 和 playindex
-            # 注意：这里只设置单首歌曲，不是整个搜索结果
             if media_player_obj:
                 media_player_obj.playlist = [music_info]
                 media_player_obj.playindex = 0
-                _LOGGER.debug(f"已设置 playlist: {music_info.song}")
+                _LOGGER.info(f"已设置 playlist: {music_info.song}, 封面: {music_info.picUrl}")
+            else:
+                _LOGGER.warning("未找到 media_player 对象，直接使用 URL 播放")
 
             # 使用 media_player 的 async_play_media 方法
             # 传入 URL 让它使用我们刚设置的 playlist
