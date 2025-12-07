@@ -228,12 +228,6 @@ class CloudMusicSearchResults(SelectEntity):
             )
             _LOGGER.info(f"开始播放: {music_info.singer} - {music_info.song}")
             
-            # 重置选择以允许重复播放同一首歌
-            # 延迟1秒后重置，给用户视觉反馈
-            await self.hass.async_add_executor_job(
-                lambda: self.hass.loop.call_later(1, self._reset_selection, selected_option)
-            )
-            
         except Exception as e:
             _LOGGER.error(f"播放歌曲失败: {e}", exc_info=True)
             await self.hass.services.async_call(
@@ -244,15 +238,3 @@ class CloudMusicSearchResults(SelectEntity):
                     "title": "云音乐播放错误"
                 }
             )
-
-    def _reset_selection(self, previous_option: str) -> None:
-        """重置选择以允许重复播放
-        
-        将当前选项重置，使用户可以再次选择同一首歌。
-        """
-        if self._attr_current_option == previous_option:
-            # 如果选择没有变化，重置为第一个选项
-            if self._attr_options and len(self._attr_options) > 0:
-                self._attr_current_option = self._attr_options[0]
-                self.schedule_update_ha_state()
-                _LOGGER.debug(f"重置选择以允许重播: {previous_option}")
