@@ -75,8 +75,8 @@ class CloudMusicSearchButton(CloudMusicButton):
     async def async_press(self) -> None:
         """执行搜索操作"""
         # 1. 读取 Text 实体的搜索关键词
-        # 注意：entity_id 格式为 text.{集成名}_{实体名}
-        text_entity_id = f"text.{manifest.name.lower().replace(' ', '_')}_{ENTITY_NAME_SEARCH_INPUT}"
+        # entity_id 与 text.py 中显式设置的保持一致
+        text_entity_id = f"text.{DOMAIN}_{ENTITY_NAME_SEARCH_INPUT}"
         text_state = self.hass.states.get(text_entity_id)
         
         if text_state is None:

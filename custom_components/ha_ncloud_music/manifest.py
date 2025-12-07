@@ -22,4 +22,4 @@ class Manifest():
         self.version = data.get('version')
         self.documentation = data.get('documentation')
 
-manifest = Manifest('ha_cloud_music')
+manifest = Manifest('ha_ncloud_music')

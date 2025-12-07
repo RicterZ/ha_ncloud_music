@@ -3,7 +3,7 @@ from enum import Enum
 import logging, os, random, time
 from urllib.parse import urlparse, parse_qs, parse_qsl, quote
 from homeassistant.helpers.json import save_json
-from custom_components.ha_cloud_music.http_api import http_get
+from custom_components.ha_ncloud_music.http_api import http_get
 from .utils import parse_query
 
 from homeassistant.components import media_source

@@ -34,6 +34,8 @@ class CloudMusicSearchInput(RestoreEntity, TextEntity):
         self._entry = entry
         self._attr_name = f"{manifest.name} 搜索关键词"
         self._attr_unique_id = f"{DOMAIN}_{entry.entry_id}_{ENTITY_NAME_SEARCH_INPUT}"
+        # 明确设置 entity_id 以避免中文名称转换问题
+        self.entity_id = f"text.{DOMAIN}_{ENTITY_NAME_SEARCH_INPUT}"
         self._attr_icon = "mdi:magnify"
         self._attr_native_max = 100
         self._attr_native_min = 0
