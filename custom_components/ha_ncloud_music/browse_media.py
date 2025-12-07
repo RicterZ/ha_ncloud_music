@@ -245,8 +245,7 @@ async def async_browse_media(media_player, media_content_type, media_content_id)
     id = query.get('id')
 
 
-    
-    elif media_content_id.startswith(CloudMusicRouter.search_results):
+    if media_content_id.startswith(CloudMusicRouter.search_results):
         
         # 显示搜索结果
         from .manifest import manifest
@@ -808,8 +807,7 @@ async def async_play_media(media_player, cloud_music, media_content_id):
     keywords = query.get('kv')
 
 
-    
-    elif media_content_id.startswith(CloudMusicRouter.search_results):
+    if media_content_id.startswith(CloudMusicRouter.search_results):
         
         # 显示搜索结果
         from .manifest import manifest
