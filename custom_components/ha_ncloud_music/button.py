@@ -158,7 +158,7 @@ class CloudMusicSearchButton(CloudMusicButton):
             _LOGGER.info(f"搜索成功，找到 {len(music_list)} 首歌曲")
             self.hass.components.persistent_notification.create(
                 f"找到 {len(music_list)} 首相关歌曲，请在搜索结果中选择播放",
-                title=f"搜索"{keyword}"成功"
+                title=f'搜索"{keyword}"成功'
             )
 
         except Exception as e:
