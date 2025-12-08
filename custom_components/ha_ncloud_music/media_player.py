@@ -1,12 +1,12 @@
-import logging, time, datetime
+import logging, datetime
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.event import async_track_time_interval
-from homeassistant.components.media_player import MediaPlayerEntity, MediaPlayerDeviceClass, MediaPlayerEntityFeature
+from homeassistant.components.media_player import MediaPlayerEntity
+from homeassistant.components.media_player.const import MediaPlayerEntityFeature
 from homeassistant.const import (
-    CONF_TOKEN, 
     CONF_URL,
     CONF_NAME,
     STATE_OFF, 
@@ -14,10 +14,10 @@ from homeassistant.const import (
     STATE_PLAYING,
     STATE_PAUSED,
     STATE_IDLE,
-    STATE_UNAVAILABLE
 )
 
 from .manifest import manifest
+
 DOMAIN = manifest.domain
 
 _LOGGER = logging.getLogger(__name__)
@@ -27,7 +27,7 @@ SUPPORT_FEATURES = MediaPlayerEntityFeature.VOLUME_STEP | MediaPlayerEntityFeatu
     MediaPlayerEntityFeature.BROWSE_MEDIA | MediaPlayerEntityFeature.SEEK | MediaPlayerEntityFeature.CLEAR_PLAYLIST | MediaPlayerEntityFeature.SHUFFLE_SET | MediaPlayerEntityFeature.REPEAT_SET
 
 # 定时器时间
-TIME_BETWEEN_UPDATES = datetime.timedelta(seconds=2)
+TIME_BETWEEN_UPDATES = datetime.timedelta(seconds=1)
 UNSUB_INTERVAL = None
 
 async def async_setup_entry(
@@ -61,7 +61,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         }
         # fixed attribute
         self._attr_media_image_remotely_accessible = True
-        self._attr_device_class = MediaPlayerDeviceClass.TV.value
+        self._attr_device_class = 'tv'
         self._attr_supported_features = SUPPORT_FEATURES
 
         # default attribute
@@ -76,42 +76,62 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self.cloud_music = hass.data['cloud_music']
         self.before_state = None
         self.current_state = None
+        self._last_position_update = None
 
     def interval(self, now):
+        """定时器回调 - 参考lsCoding666实现"""
         # 暂停时不更新
-        if self._attr_state == STATE_PAUSED:
+        if self._attr_state != STATE_PLAYING:
             return
-
+        
+        # 获取当前时间
+        new_updated_at = datetime.datetime.now()
+        
+        # 自主计时（每秒+1）
+        if not hasattr(self, '_last_position_update') or self._last_position_update is None:
+            self._last_position_update = new_updated_at
+            self._attr_media_position = 0
+        else:
+            self._attr_media_position += 1
+            self._last_position_update = new_updated_at
+            self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+        
+        # 从底层读取duration
         media_player = self.media_player
         if media_player is not None:
             attrs = media_player.attributes
-            self._attr_media_position = attrs.get('media_position', 0)
-            self._attr_media_duration = attrs.get('media_duration', 0)
-            self._attr_media_position_updated_at = datetime.datetime.now()
-            # 判断是否下一曲
+            self._attr_media_duration = int(attrs.get('media_duration', 0))
+            
+            # 判断是否下一曲（lsCoding666的逻辑）
             if self.before_state is not None:
-                # 判断音乐总时长
-                if self.before_state['media_duration'] > 0 and self.before_state['media_duration'] - self.before_state['media_duration'] <= 5:
-                    # 判断源音乐播放器状态
-                    if self.before_state['state'] == STATE_PLAYING and self.current_state == STATE_IDLE:
-                        self.hass.create_task(self.async_media_next_track())
+                if self.before_state['media_duration'] > 0:
+                    delta = self._attr_media_duration - self._attr_media_position
+                    if delta <= 1 and self._attr_media_duration > 1:
+                        self._attr_state = STATE_PAUSED
                         self.before_state = None
+                        self.hass.loop.call_soon_threadsafe(
+                            lambda: self.hass.create_task(self.async_media_next_track())
+                        )
                         return
-
-                # 源播放器空闲 & 当前正在播放
-                if self.before_state['media_duration'] == 0 and self.before_state['media_position'] == 0 and self.current_state == STATE_IDLE \
-                    and self._attr_media_duration == 0 and self._attr_media_position == 0 and self._attr_state == STATE_PLAYING:
-                        self.hass.create_task(self.async_media_next_track())
-                        self.before_state = None
-                        return
-
+                
+                # 补充：如果底层变off（MPD播完后）
+                if media_player.state == STATE_OFF and self._attr_state == STATE_PLAYING:
+                    self._attr_state = STATE_PAUSED
+                    self.before_state = None
+                    self.hass.loop.call_soon_threadsafe(
+                        lambda: self.hass.create_task(self.async_media_next_track())
+                    )
+                    return
+            
+            # 更新状态记录
             self.before_state = {
                 'media_position': int(self._attr_media_position),
                 'media_duration': int(self._attr_media_duration),
-                'state': self.current_state
+                'state': media_player.state
             }
             self.current_state = media_player.state
-
+        
+        # 更新元数据
         if hasattr(self, 'playlist'):
             music_info = self.playlist[self.playindex]
             self._attr_app_name = music_info.singer
@@ -119,6 +139,9 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             self._attr_media_album_name = music_info.album
             self._attr_media_title = music_info.song
             self._attr_media_artist = music_info.singer
+        
+        # 立即通知HA更新界面
+        self.hass.loop.call_soon_threadsafe(self.async_write_ha_state)
 
     @property
     def media_player(self):
@@ -161,6 +184,10 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
     async def async_play_media(self, media_type, media_id, **kwargs):
 
         self._attr_state = STATE_PAUSED
+        # 重置进度计时
+        self._attr_media_position = 0
+        self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+        self._last_position_update = None
         
         media_content_id = media_id
         result = await self.cloud_music.async_play_media(self, self.cloud_music, media_id)
@@ -207,7 +234,15 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         await self.cloud_music.async_media_previous_track(self, self._attr_shuffle)
 
     async def async_media_seek(self, position):
+        # 重置自主计时
+        self._attr_media_position = position
+        self._last_position_update = datetime.datetime.now()
+        self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
         await self.async_call('media_seek', { 'seek_position': position })
+
+    async def async_clear_playlist(self):
+        if hasattr(self, 'playlist'):
+            del self.playlist
 
     async def async_media_stop(self):
         await self.async_call('media_stop')
