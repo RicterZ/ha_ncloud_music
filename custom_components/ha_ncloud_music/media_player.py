@@ -1,4 +1,4 @@
-import logging, datetime
+﻿import logging, datetime
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -77,6 +77,16 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self.before_state = None
         self.current_state = None
         self._last_position_update = None
+        
+
+        # 播放列表管理 - 方案C随机播放
+
+        self._playlist_origin = []   # 原始顺序列表
+
+        self._playlist_active = []   # 实际播放队列（随机或原始）
+
+        self._play_index = 0         # 当前播放索引
+
 
     def interval(self, now):
         """定时器回调 - 参考lsCoding666实现"""
@@ -149,6 +159,23 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             return self.hass.states.get(self.source_media_player)
 
     @property
+    def playindex(self):
+        """当前播放索引（只读，自动计算）"""
+        if self._attr_shuffle and hasattr(self, '_playlist_active') and hasattr(self, '_play_index'):
+            try:
+                if 0 <= self._play_index < len(self._playlist_active):
+                    current_song = self._playlist_active[self._play_index]
+                    return self.playlist.index(current_song)
+            except (ValueError, AttributeError, IndexError):
+                pass
+        return getattr(self, '_play_index', 0)
+    
+    @playindex.setter
+    def playindex(self, value):
+        """保留setter用于向后兼容"""
+        pass
+
+    @property
     def device_info(self):
         return {
             'identifiers': {
@@ -162,7 +189,23 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
 
     @property
     def extra_state_attributes(self):
-        return self._attributes
+        attributes = dict(self._attributes)
+        
+        # 如果有播放列表，显示接下来的歌曲（队列）
+        if hasattr(self, 'playlist') and len(self.playlist) > 0:
+            # 如果开启随机，返回打乱后的列表作为 UI 展示用的 queue
+            if self._attr_shuffle and hasattr(self, '_playlist_active') and len(self._playlist_active) > 0:
+                # 从当前位置+1开始的接下来的歌曲
+                next_index = self._play_index + 1
+                if next_index < len(self._playlist_active):
+                    attributes['next_tracks'] = [song.song for song in self._playlist_active[next_index:next_index+10]]  # 显示接下来10首
+            else:
+                # 正常顺序
+                next_index = self.playindex + 1 if hasattr(self, 'playindex') else 0
+                if next_index < len(self.playlist):
+                    attributes['next_tracks'] = [song.song for song in self.playlist[next_index:next_index+10]]  # 显示接下来10首
+        
+        return attributes
 
     async def async_browse_media(self, media_content_type=None, media_content_id=None):
         return await self.cloud_music.async_browse_media(self, media_content_type, media_content_id)
@@ -194,13 +237,21 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         if result is not None:
             if result == 'index':
                 # 播放当前列表指定项
-                media_content_id = self.playlist[self.playindex].url
+                # 根据shuffle状态选择正确的歌曲
+                if self._attr_shuffle and hasattr(self, '_playlist_active') and len(self._playlist_active) > 0:
+                    media_content_id = self._playlist_active[self._play_index].url
+                else:
+                    media_content_id = self.playlist[self.playindex].url
             elif result.startswith('http'):
                 # HTTP播放链接
                 media_content_id = result
             else:
-                # 添加播放列表到播放器
-                media_content_id = self.playlist[self.playindex].url
+                # 添加播放列表到播放器（新歌单的第一首）
+                # 根据shuffle状态选择正确的第一首歌
+                if self._attr_shuffle and hasattr(self, '_playlist_active') and len(self._playlist_active) > 0:
+                    media_content_id = self._playlist_active[self._play_index].url
+                else:
+                    media_content_id = self.playlist[self.playindex].url
 
         self._attr_media_content_id = media_content_id
         await self.async_call('play_media', {
@@ -222,8 +273,193 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
     async def async_set_repeat(self, repeat):
         self._attr_repeat = repeat
 
+
+    def _smart_shuffle(self):
+
+        """智能打乱播放列表 - Spotify风格，避免边界重复
+
+        
+
+        策略：
+
+        - 小歌单(≤3首)：完全随机，不做限制
+
+        - 中等歌单(4-20首)：避免上一轮最后N首出现在本轮前N首（N=min(歌单*40%, 5)）
+
+        - 大歌单(>20首)：避免最后5首出现在前5首
+
+        """
+
+        import random
+
+        
+
+        playlist_len = len(self._playlist_origin)
+
+        
+
+        # 小歌单特殊处理：完全随机
+
+        if playlist_len <= 3:
+
+            self._playlist_active = list(self._playlist_origin)
+
+            random.shuffle(self._playlist_active)
+
+            _LOGGER.debug(f"小歌单({playlist_len}首)完全随机打乱")
+
+            return
+
+        
+
+        # 记住上一轮的最后几首（最多5首或40%）
+
+        avoid_count = min(5, max(1, int(playlist_len * 0.4)))
+
+        
+
+        # 获取上一轮的最后几首歌（如果存在）
+
+        last_songs = []
+
+        if hasattr(self, '_playlist_active') and len(self._playlist_active) > 0:
+
+            last_songs = self._playlist_active[-avoid_count:]
+
+        
+
+        # 打乱整个列表
+
+        self._playlist_active = list(self._playlist_origin)
+
+        random.shuffle(self._playlist_active)
+
+        
+
+        # 如果有上一轮记录，尝试避免边界重复
+
+        if last_songs:
+
+            max_retries = 10
+
+            retry_count = 0
+
+            
+
+            while retry_count < max_retries:
+
+                first_songs = self._playlist_active[:avoid_count]
+
+                # 检查前N首是否和上一轮最后N首有重复
+
+                has_overlap = any(song in last_songs for song in first_songs)
+
+                
+
+                if not has_overlap:
+
+                    _LOGGER.debug(f"智能打乱成功：避免了上一轮最后{avoid_count}首出现在本轮前{avoid_count}首")
+
+                    break
+
+                
+
+                # 有重复，重新打乱
+
+                random.shuffle(self._playlist_active)
+
+                retry_count += 1
+
+            
+
+            if retry_count >= max_retries:
+
+                _LOGGER.debug(f"智能打乱({max_retries}次尝试后)：接受当前随机结果")
+
+        else:
+
+            _LOGGER.debug(f"首次打乱播放列表({playlist_len}首)")
+
+
     async def async_set_shuffle(self, shuffle):
+
+        """设置随机播放 - 方案C实现"""
+
+        import random
+
+        
+
         self._attr_shuffle = shuffle
+
+        
+
+        # 如果没有播放列表，只设置标志
+
+        if not hasattr(self, 'playlist') or len(self.playlist) == 0:
+
+            return
+
+        
+
+        # 获取当前播放的歌曲（使用 _playlist_active 和 _play_index）
+        try:
+            current_song = self._playlist_active[self._play_index]
+        except (AttributeError, IndexError):
+            # 如果未初始化，使用playlist[0]
+            current_song = self.playlist[0] if hasattr(self, 'playlist') and len(self.playlist) > 0 else None
+            if current_song is None:
+                return
+
+        
+
+        if shuffle:
+
+            # 开启随机：整个列表打乱
+
+
+
+            # 使用智能打乱方法（避免边界重复）
+            self._smart_shuffle()
+
+
+
+            # 将当前歌移到第一个位置，确保不跳过任何歌曲
+            try:
+                current_index = self._playlist_active.index(current_song)
+                # 将当前歌和第一首歌交换位置
+                if current_index != 0:
+                    self._playlist_active[0], self._playlist_active[current_index] = \
+                        self._playlist_active[current_index], self._playlist_active[0]
+                self._play_index = 0
+                _LOGGER.debug(f"开启随机播放，打乱 {len(self._playlist_active)} 首歌，当前歌已移到索引 0")
+            except ValueError:
+                # 当前歌不在列表中，从头开始
+                self._play_index = 0
+                _LOGGER.warning(f"开启随机播放时未找到当前歌，从索引 0 开始")
+
+
+
+        else:
+
+            # 关闭随机：恢复原始顺序
+
+            self._playlist_active = list(self.playlist)
+
+            # 找到当前歌在原始列表中的位置（安全处理）
+
+            try:
+
+                self._play_index = self._playlist_active.index(current_song)
+
+            except ValueError:
+
+                # 极端情况兜底
+
+                self._play_index = self.playindex
+
+            _LOGGER.debug(f"关闭随机播放，恢复原始顺序")
+
+
 
     async def async_media_next_track(self):
         self._attr_state = STATE_PAUSED

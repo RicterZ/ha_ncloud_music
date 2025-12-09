@@ -226,10 +226,10 @@ class CloudMusicSearchResults(SelectEntity):
         if hasattr(music_info, 'singer'):  # MusicInfo 对象 - 直接播放歌曲
             _LOGGER.info(f"准备播放歌曲: {music_info.song} - {music_info.singer}")
             try:
-                # 设置 media_player 的 playlist 和 playindex
+                # 设置 media_player 的 playlist 和 _play_index
                 if media_player_obj:
                     media_player_obj.playlist = [music_info]
-                    media_player_obj.playindex = 0
+                    media_player_obj._play_index = 0
                     _LOGGER.info(f"已设置 playlist: {music_info.song}, 封面: {music_info.picUrl}")
                 else:
                     _LOGGER.warning("未找到 media_player 对象，直接使用 URL 播放")

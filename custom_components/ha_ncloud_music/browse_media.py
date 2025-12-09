@@ -124,6 +124,17 @@ async def async_browse_media(media_player, media_content_type, media_content_id)
                 'path': CloudMusicRouter.local_playlist,
                 'type': MediaType.PLAYLIST
             },
+        ]
+        
+        # 如果开启随机播放且有播放列表，插入随机队列
+        if media_player._attr_shuffle and hasattr(media_player, '_playlist_active') and len(media_player._playlist_active) > 0:
+            children.insert(0, {
+                'title': '🔀 随机播放队列 (接下来播放)',
+                'path': f'{CloudMusicRouter.local_playlist}?shuffle=true',
+                'type': MediaType.PLAYLIST
+            })
+        
+        children.extend([
             {
                 'title': '媒体库',
                 'path': CloudMusicRouter.media_source,
@@ -136,7 +147,7 @@ async def async_browse_media(media_player, media_content_type, media_content_id)
                 'type': MediaType.ALBUM,
                 'thumbnail': 'http://p2.music.126.net/pcYHpMkdC69VVvWiynNklA==/109951166952713766.jpg'
             }
-        ]
+        ])
         # 当前登录用户
         if cloud_music.userinfo.get('uid') is not None:
             children.extend([
@@ -312,17 +323,25 @@ async def async_browse_media(media_player, media_content_type, media_content_id)
 
     if media_content_id.startswith(CloudMusicRouter.local_playlist):
         # 本地播放列表
+        # 检查是否是随机队列
+        is_shuffle_queue = query.get('shuffle') == 'true'
+        
         library_info = BrowseMedia(
             media_class=MediaClass.DIRECTORY,
             media_content_id=media_content_id,
             media_content_type=MediaType.PLAYLIST,
-            title=title,
+            title=title if title else ('随机播放队列' if is_shuffle_queue else '播放列表'),
             can_play=False,
             can_expand=False,
             children=[],
         )
 
-        playlist = [] if hasattr(media_player, 'playlist') == False else media_player.playlist
+        # 根据shuffle参数决定显示哪个列表
+        if is_shuffle_queue and hasattr(media_player, '_playlist_active'):
+            playlist = media_player._playlist_active
+        else:
+            playlist = [] if hasattr(media_player, 'playlist') == False else media_player.playlist
+        
         for index, item in enumerate(playlist):
             title = item.song
             if not item.singer:
@@ -981,7 +1000,30 @@ async def async_play_media(media_player, cloud_music, media_content_id):
         return library_info
 
     if media_content_id.startswith(CloudMusicRouter.local_playlist):
-        media_player.playindex = playindex
+        # 检查是否是随机队列的点击
+        is_shuffle_click = query.get('shuffle') == 'true'
+        
+        if is_shuffle_click and hasattr(media_player, '_playlist_active'):
+            # 点击的是随机队列，直接设置 _play_index
+            media_player._play_index = playindex
+            _LOGGER.debug(f"点击随机队列索引 {playindex}")
+        else:
+            # 点击的是普通播放列表
+            if media_player._attr_shuffle and hasattr(media_player, '_playlist_active'):
+                # 随机模式：查找在随机列表中的位置
+                if playindex < len(media_player.playlist):
+                    clicked_song = media_player.playlist[playindex]
+                    try:
+                        media_player._play_index = media_player._playlist_active.index(clicked_song)
+                        _LOGGER.debug(f"点击列表索引 {playindex}（随机模式），映射到随机索引 {media_player._play_index}")
+                    except ValueError:
+                        media_player._play_index = 0
+                        _LOGGER.warning("歌曲不在随机列表中")
+            else:
+                # 顺序模式：直接设置 _play_index
+                media_player._play_index = playindex
+                _LOGGER.debug(f"点击列表索引 {playindex}（顺序模式）")
+        
         return 'index'
 
     if media_content_id.startswith(CloudMusicRouter.playlist):
@@ -1050,43 +1092,117 @@ async def async_play_media(media_player, cloud_music, media_content_id):
                 playlist = [music_info]
 
     if playlist is not None:
-        media_player.playindex = playindex
         media_player.playlist = playlist
+        media_player._playlist_origin = list(playlist)
+        
+        # 初始化随机播放列表（如果需要）
+        if media_player._attr_shuffle:  # 如果当前是随机模式
+            import random
+            media_player._playlist_active = list(playlist)
+            random.shuffle(media_player._playlist_active)
+            
+            # UX优化：如果用户点击了特定歌曲，把它移到第一位
+            if playindex > 0 and playindex < len(playlist):
+                clicked_song = playlist[playindex]
+                try:
+                    # 找到点击的歌在随机列表中的位置
+                    clicked_index = media_player._playlist_active.index(clicked_song)
+                    # 移到第一位
+                    media_player._playlist_active.pop(clicked_index)
+                    media_player._playlist_active.insert(0, clicked_song)
+                    _LOGGER.debug(f"新歌单，随机模式：打乱 {len(media_player._playlist_active)} 首歌，用户点击第{playindex+1}首，移到第1位")
+                except (ValueError, IndexError):
+                    _LOGGER.debug(f"新歌单，随机模式：打乱 {len(media_player._playlist_active)} 首歌")
+            else:
+                _LOGGER.debug(f"新歌单，随机模式：打乱 {len(media_player._playlist_active)} 首歌")
+            
+            media_player._play_index = 0  # 从第一首开始
+        else:
+            media_player._playlist_active = list(playlist)
+            media_player._play_index = playindex
+            _LOGGER.debug(f"新歌单，顺序模式：_play_index={playindex}")
+        
         return 'playlist'
 
 
 # 上一曲
 async def async_media_previous_track(media_player, shuffle=False):
+
+    """上一曲 - 方案C随机播放实现"""
+
+    import random
+
+    
+
     if hasattr(media_player, 'playlist') == False:
+
         return
 
-    playlist = media_player.playlist
-    count = len(playlist)
-    # 随机
-    if shuffle:
-        playindex = random.randint(0, count - 1)
+    
+
+    # 使用新的双列表机制
+
+    if shuffle and hasattr(media_player, '_playlist_active') and len(media_player._playlist_active) > 0:
+
+        media_player._play_index -= 1
+
+        
+
+        # 如果到了起始位置，跳到末尾
+
+        if media_player._play_index < 0:
+
+            media_player._play_index = len(media_player._playlist_active) - 1
+
     else:
+        # 非随机模式，使用 _play_index
+        count = len(media_player.playlist)
         if count <= 1:
             return
-        playindex = media_player.playindex - 1
-        if playindex < 0:
-            playindex = count - 1
-    media_player.playindex = playindex
-    await media_player.async_play_media(MediaType.MUSIC, playlist[playindex].url)
+        
+        media_player._play_index -= 1
+        if media_player._play_index < 0:
+            media_player._play_index = count - 1
 
-# 下一曲
+    
+
+    # 播放歌曲并记录日志
+    current_song = media_player.playlist[media_player.playindex]
+    _LOGGER.info(f' 下一曲: [{media_player.playindex + 1}/{len(media_player.playlist)}] {current_song.song} - {current_song.singer}')
+    if shuffle and hasattr(media_player, '_play_index'):
+        _LOGGER.debug(f'   随机索引: {media_player._play_index}/{len(media_player._playlist_active)}')
+    await media_player.async_play_media(MediaType.MUSIC, current_song.url)
+
+
+
 async def async_media_next_track(media_player, shuffle=False):
+    """下一曲 - 方案C随机播放实现"""
+    import random
+    
     if hasattr(media_player, 'playlist') == False:
         return
+    
+    # 使用新的双列表机制
+    if shuffle and hasattr(media_player, '_playlist_active') and len(media_player._playlist_active) > 0:
+        # 切歌，索引+1
+        media_player._play_index += 1
+        
+        # 播完一轮，重新洗牌（使用智能打乱）
+        if media_player._play_index >= len(media_player._playlist_active):
+            media_player._smart_shuffle()  # 使用智能打乱方法
+            media_player._play_index = 0
+            _LOGGER.debug("播完一轮，使用智能打乱重新洗牌")
 
-    playindex = media_player.playindex + 1
-    playlist = media_player.playlist
-    count = len(playlist)
-    # 随机
-    if shuffle:
-        playindex = random.randint(0, count - 1)
     else:
-        if playindex >= len(playlist):
-            playindex = 0
-    media_player.playindex = playindex
-    await media_player.async_play_media(MediaType.MUSIC, playlist[playindex].url)
+        # 非随机模式，使用 _play_index
+        media_player._play_index += 1
+        if media_player._play_index >= len(media_player.playlist):
+            media_player._play_index = 0
+    
+    # 记录播放日志
+    current_song = media_player.playlist[media_player.playindex]
+    _LOGGER.info(f"🎵 下一曲: [{media_player.playindex + 1}/{len(media_player.playlist)}] {current_song.song} - {current_song.singer}")
+    if shuffle and hasattr(media_player, '_play_index'):
+        _LOGGER.info(f"   随机索引: {media_player._play_index + 1}/{len(media_player._playlist_active)}")
+    await media_player.async_play_media(MediaType.MUSIC, current_song.url)
+
