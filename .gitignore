@@ -150,3 +150,6 @@ supervisor_token
 # Test files - DO NOT COMMIT
 *_test.json
 *.backup
+
+# Development scripts - DO NOT COMMIT
+migration/
