@@ -1,0 +1,37 @@
+{
+    "title": "云音乐",
+    "config": {
+        "abort": {
+            "single_instance_allowed": "仅允许单个配置"
+        },
+        "step": {
+            "user": {
+                "title": "接口配置",
+                "description": "为防止你的账号密码泄露，建议自行部署API接口服务 \n免费部署文档：https://neteasecloudmusicapi.vercel.app \n实在是搞不来，也可以付费使用由我部署维护持续更新的接口服务😊",
+                "data": {
+                    "url": "网易云音乐API"
+                }
+            }
+        },
+        "error": {
+            "login_failed": "登录失败",
+            "api_failed": "接口地址不正确"
+        }
+    },
+    "options": {
+        "step": {
+            "user": {
+                "title": "配置",
+                "description": "关联的媒体播放器必须支持自定义音乐资源，可通过TTS插件自行测试是否可用。\n\n【说明】此处仅设置期望的最高音质。实际播放音质受限于您的账号权益。\n注意：高音质/特效音质依赖播放设备解码，若设备不支持可能导致静音或播放失败。",
+                "data": {
+                    "media_player": "关联媒体播放器",
+                    "audio_quality": "首选音质",
+                    "url": "第三方音乐接口"
+                }
+            }
+        },
+        "error": {
+            "login_failed": "登录失败"
+        }
+    }
+}

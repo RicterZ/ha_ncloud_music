@@ -18,7 +18,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     data = entry.data
     api_url = data.get(CONF_URL)
     vip_url = entry.options.get(CONF_URL, '')
-    hass.data['cloud_music'] = CloudMusic(hass, api_url, vip_url)
+    
+    # 读取音质配置
+    from .const import CONF_AUDIO_QUALITY, DEFAULT_AUDIO_QUALITY
+    audio_quality = entry.options.get(CONF_AUDIO_QUALITY, DEFAULT_AUDIO_QUALITY)
+    
+    hass.data['cloud_music'] = CloudMusic(hass, api_url, vip_url, audio_quality)
     
     # 初始化共享搜索数据存储（用于 text、button、select 实体间的数据共享）
     from .const import DATA_SEARCH_RESULTS, DATA_LAST_UPDATE, DATA_KEYWORD

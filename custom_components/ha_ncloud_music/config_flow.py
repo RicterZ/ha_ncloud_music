@@ -86,6 +86,14 @@ class OptionsFlowHandler(OptionsFlow):
 
         # 防止 options 中没有 media_player 键时报错
         current_media_players = options.get('media_player', [])
+        
+        # 音质选项
+        from .const import CONF_AUDIO_QUALITY, DEFAULT_AUDIO_QUALITY, AUDIO_QUALITY_OPTIONS
+        current_quality = options.get(CONF_AUDIO_QUALITY, DEFAULT_AUDIO_QUALITY)
+        quality_options = [
+            {"label": label, "value": value}
+            for label, value in AUDIO_QUALITY_OPTIONS.items()
+        ]
 
         DATA_SCHEMA = vol.Schema({
             vol.Required('media_player', default=current_media_players): selector({
@@ -93,7 +101,14 @@ class OptionsFlowHandler(OptionsFlow):
                     "options": media_entities,
                     "multiple": True
                 }
-            })
+            }),
+            vol.Required(CONF_AUDIO_QUALITY, default=current_quality): selector({
+                "select": {
+                    "options": quality_options,
+                    "mode": "dropdown"
+                }
+            }),
+            vol.Optional(CONF_URL, default=options.get(CONF_URL, '')): str
         })
         
         return self.async_show_form(step_id="user", data_schema=DATA_SCHEMA, errors=errors)

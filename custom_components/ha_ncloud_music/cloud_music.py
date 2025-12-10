@@ -22,10 +22,11 @@ _LOGGER = logging.getLogger(__name__)
 
 class CloudMusic():
 
-    def __init__(self, hass, url, vip_url) -> None:
+    def __init__(self, hass, url, vip_url, audio_quality='exhigh') -> None:
         self.hass = hass
         self.api_url = url.strip('/')
         self.vip_url = vip_url.strip('/')
+        self.audio_quality = audio_quality
 
         # 媒体资源
         self.async_browse_media = async_browse_media
@@ -161,14 +162,55 @@ class CloudMusic():
         
         return None
 
-    # 获取音乐链接
-    async def song_url(self, id):
-        res = await self.netease_cloud_music(f'/song/url/v1?id={id}&level=standard')
-        data = res['data'][0]
-        url = data['url']
-        # 0：免费
-        # 1：收费
-        fee = 0 if data['freeTrialInfo'] is None else 1
+    # 获取音乐链接（智能兜底模式）
+    async def song_url(self, id, level=None):
+        """
+        获取歌曲URL，官方源不可用时自动解灰
+        
+        策略：官方优先 + 解灰兜底
+        - 官方能播（哪怕 128k）就用官方（歌词/封面最准）
+        - 只有完全不能播或只能试听时才启动解灰
+        
+        Returns:
+            (url, fee): url=播放链接, fee=0免费/1收费
+        """
+        # 使用传入的 level 或实例配置的 audio_quality
+        _level = level or self.audio_quality
+        
+        # 1. 先尝试官方源
+        res = await self.netease_cloud_music(f'/song/url/v1?id={id}&level={_level}')
+        data = res.get('data', [{}])[0]
+        url = data.get('url')
+        trial_info = data.get('freeTrialInfo')
+        fee = 0 if trial_info is None else 1
+        
+        # 2. 检测是否可用（有URL且不是试听片段）
+        if url is not None and trial_info is None:
+            return url, fee
+        
+        # 3. 官方源不可用（无URL或试听片段），尝试解灰
+        # 音源锁定：pyncmd,bodian,kuwo（黄金三角，PoC测试最优解）
+        _LOGGER.info(f"歌曲 {id} 需要解灰（试听限制或无URL），尝试解灰源")
+        try:
+            res_unblock = await self.netease_cloud_music(
+                f'/song/url/match?id={id}&source=pyncmd,bodian,kuwo'
+            )
+            if res_unblock.get('code') == 200:
+                unblock_data = res_unblock.get('data', {})
+                # 处理数组格式返回
+                if isinstance(unblock_data, list):
+                    unblock_data = unblock_data[0] if unblock_data else {}
+                unblock_url = unblock_data.get('url')
+                if unblock_url:
+                    source = unblock_data.get('source', 'unblock')
+                    br = unblock_data.get('br', 0)
+                    _LOGGER.info(f"歌曲 {id} 解灰成功，来源: {source}, 码率: {br//1000}k")
+                    return unblock_url, 0
+        except Exception as e:
+            _LOGGER.warning(f"解灰失败 (ID: {id}): {e}")
+        
+        # 4. 解灰也失败，返回原始URL（可能是试听片段或None）
+        _LOGGER.warning(f"歌曲 {id} 解灰失败，使用原始URL")
         return url, fee
 
     # 获取云盘音乐链接

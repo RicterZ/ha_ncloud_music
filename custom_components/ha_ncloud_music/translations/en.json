@@ -1,36 +1,37 @@
 {
-  "title": "云音乐",
+  "title": "Cloud Music",
   "config": {
     "abort": {
-      "single_instance_allowed": "仅允许单个配置"
+      "single_instance_allowed": "Only a single configuration is allowed"
     },
     "step": {
       "user": {
-        "title": "接口配置",
-        "description": "为防止你的账号密码泄露，建议自行部署API接口服务 \n免费部署文档：https://neteasecloudmusicapi.vercel.app \n实在是搞不来，也可以付费使用由我部署维护持续更新的接口服务😊",
+        "title": "API Configuration",
+        "description": "To prevent your password from leaking, it is recommended to deploy the API service yourself.\nFree deployment guide: https://neteasecloudmusicapi.vercel.app\nIf you can't set it up, you can also use the paid service maintained by me 😊",
         "data": {
-          "url": "网易云音乐API"
+          "url": "NetEase Cloud Music API"
         }
       }
     },
     "error": {
-      "login_failed": "登录失败",
-      "api_failed": "接口地址不正确"
+      "login_failed": "Login failed",
+      "api_failed": "Invalid API address"
     }
   },
   "options": {
     "step": {
       "user": {
-        "title": "配置",
-        "description": "关联的媒体播放器必须支持自定义音乐资源，可通过TTS插件自行测试是否可用",
+        "title": "Configuration",
+        "description": "The linked media player must support custom music sources. You can test availability using a TTS plugin.\n\n[Note] This sets your preferred maximum audio quality. Actual playback quality depends on your account privileges.\nWarning: Hi-Fi/special audio formats require device decoding support. Unsupported devices may result in silence or playback failure.",
         "data": {
-          "media_player": "关联媒体播放器",
-          "url": "第三方音乐接口"
+          "media_player": "Linked Media Player",
+          "audio_quality": "Preferred Audio Quality",
+          "url": "Third-party Music API"
         }
       }
     },
     "error": {
-      "login_failed": "登录失败"
+      "login_failed": "Login failed"
     }
   }
 }
