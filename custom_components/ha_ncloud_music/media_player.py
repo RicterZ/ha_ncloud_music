@@ -256,6 +256,15 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         })
         self._attr_state = STATE_PLAYING
         
+        # 立即更新元数据（避免等待 interval）
+        if hasattr(self, 'playlist') and len(self.playlist) > 0:
+            music_info = self.playlist[self.playindex]
+            self._attr_app_name = music_info.singer
+            self._attr_media_image_url = music_info.thumbnail
+            self._attr_media_album_name = music_info.album
+            self._attr_media_title = music_info.song
+            self._attr_media_artist = music_info.singer
+        
         # 通知 HA 更新状态（播放新歌时立即刷新）
         self.async_write_ha_state()
         
