@@ -480,11 +480,16 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         await self.cloud_music.async_media_previous_track(self, self._attr_shuffle)
 
     async def async_media_seek(self, position):
-        # 重置自主计时
+        # 先执行 seek 操作
+        await self.async_call('media_seek', { 'seek_position': position })
+        
+        # seek 完成后更新位置和时间戳
         self._attr_media_position = position
         self._last_position_update = datetime.datetime.now()
         self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
-        await self.async_call('media_seek', { 'seek_position': position })
+        
+        # 通知 HA 更新状态（歌词卡片会根据这个时间戳计算位置）
+        self.async_write_ha_state()
 
     async def async_clear_playlist(self):
         if hasattr(self, 'playlist'):
