@@ -102,7 +102,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error("找不到可用的媒体播放器")
             hass.components.persistent_notification.async_create(
                 f"搜索失败：找不到可用的播放器",
-                title="网易云音乐",
+                title="云音乐",
                 notification_id="ha_ncloud_music_error"
             )
             return
@@ -129,7 +129,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.error(f"播放失败: {e}")
             hass.components.persistent_notification.async_create(
                 f"搜索 '{keyword}' 失败：{e}",
-                title="网易云音乐",
+                title="云音乐",
                 notification_id="ha_ncloud_music_error"
             )
     

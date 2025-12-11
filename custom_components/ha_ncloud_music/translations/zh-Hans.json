@@ -9,7 +9,7 @@
                 "title": "接口配置",
                 "description": "为防止你的账号密码泄露，建议自行部署API接口服务 \n免费部署文档：https://neteasecloudmusicapi.vercel.app \n实在是搞不来，也可以付费使用由我部署维护持续更新的接口服务😊",
                 "data": {
-                    "url": "网易云音乐API"
+                    "url": "云音乐API"
                 }
             }
         },

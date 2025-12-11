@@ -124,7 +124,7 @@ class CloudMusic():
         url_encoded_data = quote(encoded_data.decode('utf-8'), safe='-_')
         return f'{base_url}/cloud_music/url?data={url_encoded_data}'
 
-    # 网易云音乐接口
+    # 云音乐接口
     async def netease_cloud_music(self, url):
         res = await http_get(self.api_url + url, self.userinfo.get('cookie', {}))
         code = res.get('code')
@@ -144,7 +144,7 @@ class CloudMusic():
         歌词优先级：yrc (逐字) > lrc (普通) > 无歌词
         
         Args:
-            song_id: 网易云音乐歌曲ID
+            song_id: 云音乐歌曲ID
         
         Returns:
             {
