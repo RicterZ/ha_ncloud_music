@@ -49,15 +49,14 @@ https://github.com/neteasecloudmusicapienhanced/api-enhanced
 - [x] 每日推荐 `cloudmusic://163/my/daily`
 - [x] 我喜欢的音乐 `cloudmusic://163/my/ilike`
 
+## 🎵 歌词卡片
+
+歌词卡片已独立为单独项目，请访问：[ha_ncloud_music_card](https://github.com/neqq3/ha_ncloud_music_card)
+
 ## 关联项目
 
 - https://github.com/shaonianzhentan/cloud_music_mpd
 - https://github.com/shaonianzhentan/ha_windows
-
-## 如果这个项目对你有帮助，请我喝杯<del style="font-size: 14px;">咖啡</del>奶茶吧😘
-|支付宝|微信|
-|---|---|
-<img src="https://ha.jiluxinqing.com/img/alipay.png" align="left" height="160" width="160" alt="支付宝" title="支付宝">  |  <img src="https://ha.jiluxinqing.com/img/wechat.png" align="left" height="160" width="160" alt="微信支付" title="微信">
 
 #### 关注我的微信订阅号，了解更多HomeAssistant相关知识
 <img src="https://ha.jiluxinqing.com/img/wechat-channel.png" height="160" alt="HomeAssistant家庭助理" title="HomeAssistant家庭助理">
