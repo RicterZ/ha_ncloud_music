@@ -72,3 +72,10 @@ AUDIO_QUALITY_OPTIONS = {
     "杜比全景声 👑": AUDIO_QUALITY_DOLBY,
     "超清母带  👑": AUDIO_QUALITY_JYMASTER,
 }
+
+# 切歌时机配置 (秒)
+# 正数：延迟切歌 (例如 1.2)
+# 负数：提前切歌 (例如 -0.5)
+# 0：准时切歌
+CONF_NEXT_TRACK_TIMING = "next_track_timing"
+DEFAULT_NEXT_TRACK_TIMING = 0.0

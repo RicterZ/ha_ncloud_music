@@ -16,6 +16,8 @@ from homeassistant.const import (
     STATE_IDLE,
 )
 
+from .const import CONF_NEXT_TRACK_TIMING, DEFAULT_NEXT_TRACK_TIMING
+
 from .manifest import manifest
 
 DOMAIN = manifest.domain
@@ -38,7 +40,7 @@ async def async_setup_entry(
 
     entities = []
     for source_media_player in entry.options.get('media_player', []):
-      entities.append(CloudMusicMediaPlayer(hass, source_media_player))
+      entities.append(CloudMusicMediaPlayer(hass, source_media_player, entry))
 
     def media_player_interval(now):
       for mp in entities:
@@ -54,7 +56,7 @@ async def async_setup_entry(
 
 class CloudMusicMediaPlayer(MediaPlayerEntity):
 
-    def __init__(self, hass, source_media_player):
+    def __init__(self, hass, source_media_player, entry):
         self.hass = hass
         self._attributes = {
             'platform': 'cloud_music'
@@ -72,6 +74,9 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self._attr_volume_level = 1
         self._attr_repeat = 'all'
         self._attr_shuffle = False
+
+        # 读取切歌时机配置
+        self._next_track_timing = entry.options.get(CONF_NEXT_TRACK_TIMING, DEFAULT_NEXT_TRACK_TIMING) if hasattr(entry, 'options') else DEFAULT_NEXT_TRACK_TIMING
 
         self.cloud_music = hass.data['cloud_music']
         self.before_state = None
@@ -106,22 +111,60 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             self._last_position_update = new_updated_at
             self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
         
-        # 从底层读取duration
+        # 从底层读取duration（优先使用播放列表的 duration，回退到底层播放器）
         media_player = self.media_player
         if media_player is not None:
-            attrs = media_player.attributes
-            self._attr_media_duration = int(attrs.get('media_duration', 0))
+            # 优先从播放列表获取 duration（云音乐 API 返回的准确值）
+            playlist_duration = 0
+            if hasattr(self, 'playlist') and len(self.playlist) > 0:
+                try:
+                    music_info = self.playlist[self.playindex]
+                    playlist_duration = int(music_info.duration / 1000) if music_info.duration > 1000 else int(music_info.duration)
+                except (IndexError, AttributeError):
+                    pass
             
-            # 判断是否下一曲（lsCoding666的逻辑）
+            # 从底层播放器获取 duration
+            attrs = media_player.attributes
+            player_duration = int(attrs.get('media_duration', 0))
+            
+            # 优先使用播放列表的 duration（如果有效）
+            if playlist_duration > 0:
+                self._attr_media_duration = playlist_duration
+            elif player_duration > 0:
+                self._attr_media_duration = player_duration
+            # 否则保持原值，避免设为 0
+            
+            # 判断是否下一曲（可配置切歌时机 - 自定义秒数）
             if self.before_state is not None:
                 if self.before_state['media_duration'] > 0:
                     delta = self._attr_media_duration - self._attr_media_position
-                    if delta <= 1 and self._attr_media_duration > 1:
-                        self._attr_state = STATE_PAUSED
-                        self.before_state = None
-                        self.hass.loop.call_soon_threadsafe(
-                            lambda: self.hass.create_task(self.async_media_next_track())
-                        )
+                    
+                    # 计算触发窗口：
+                    # 如果是延迟(>0)，窗口为 1秒 (在结束前1秒触发调度)
+                    # 如果是提前(<0)，窗口为 提前量 + 1秒 (例如提前5秒，窗口为6秒)
+                    trigger_threshold = max(1, -self._next_track_timing + 1)
+                    
+                    if delta <= trigger_threshold and self._attr_media_duration > 1:
+                        if not getattr(self, '_next_track_scheduled', False):
+                            # 计算实际需要等待的时间
+                            # wait_time = 剩余时间 + 设定时间
+                            # 例1 (延迟1.2s): 剩余1s + 1.2s = 等待2.2s
+                            # 例2 (提前0.5s): 剩余1s + (-0.5s) = 等待0.5s
+                            wait_time = delta + self._next_track_timing
+                            
+                            self._next_track_scheduled = True
+                            
+                            if wait_time <= 0:
+                                # 立即切歌
+                                self.hass.loop.call_soon_threadsafe(
+                                    lambda: self.hass.create_task(self.async_media_next_track())
+                                )
+                            else:
+                                # 延迟切歌
+                                self.hass.loop.call_later(
+                                    wait_time, 
+                                    lambda: self.hass.create_task(self.async_media_next_track())
+                                )
                         return
                 
                 # 补充：如果底层变off（MPD播完后）
@@ -226,7 +269,10 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         # 重置进度计时
         self._attr_media_position = 0
         self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+        self._attr_media_position = 0
+        self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
         self._last_position_update = None
+        self._next_track_scheduled = False  # 重置切歌调度标志
         
         media_content_id = media_id
         result = await self.cloud_music.async_play_media(self, self.cloud_music, media_id)
@@ -264,6 +310,11 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             self._attr_media_album_name = music_info.album
             self._attr_media_title = music_info.song
             self._attr_media_artist = music_info.singer
+            # 同步更新 duration（云音乐 API 返回毫秒，需转换）
+            if music_info.duration > 0:
+                self._attr_media_duration = int(music_info.duration / 1000) if music_info.duration > 1000 else int(music_info.duration)
+            # 存储 song_id 供前端歌词卡片使用
+            self._current_song_id = str(music_info.id)
         
         # 通知 HA 更新状态（播放新歌时立即刷新）
         self.async_write_ha_state()
@@ -500,7 +551,11 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
 
     # 更新属性
     async def async_update(self):
-        pass
+        # 重新读取配置（支持动态修改选项）
+        if self.entity_id:
+            entry = self.hass.config_entries.async_get_entry(self.registry_entry.config_entry_id)
+            if entry:
+                self._next_track_timing = entry.options.get(CONF_NEXT_TRACK_TIMING, DEFAULT_NEXT_TRACK_TIMING)
 
     # 调用服务
     async def async_call(self, service, service_data={}):

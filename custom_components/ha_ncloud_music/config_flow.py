@@ -94,6 +94,10 @@ class OptionsFlowHandler(OptionsFlow):
             {"label": label, "value": value}
             for label, value in AUDIO_QUALITY_OPTIONS.items()
         ]
+        
+        # 切歌时机选项 (自定义秒数)
+        from .const import CONF_NEXT_TRACK_TIMING, DEFAULT_NEXT_TRACK_TIMING
+        current_timing = options.get(CONF_NEXT_TRACK_TIMING, DEFAULT_NEXT_TRACK_TIMING)
 
         DATA_SCHEMA = vol.Schema({
             vol.Required('media_player', default=current_media_players): selector({
@@ -106,6 +110,15 @@ class OptionsFlowHandler(OptionsFlow):
                 "select": {
                     "options": quality_options,
                     "mode": "dropdown"
+                }
+            }),
+            vol.Required(CONF_NEXT_TRACK_TIMING, default=current_timing): selector({
+                "number": {
+                    "min": -5.0,
+                    "max": 5.0,
+                    "step": 0.1,
+                    "unit_of_measurement": "s",
+                    "mode": "box"
                 }
             }),
             vol.Optional(CONF_URL, default=options.get(CONF_URL, '')): str
