@@ -3,7 +3,7 @@
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import async_track_time_interval, async_track_state_change_event
 from homeassistant.components.media_player import MediaPlayerEntity
 from homeassistant.components.media_player.const import MediaPlayerEntityFeature
 from homeassistant.const import (
@@ -257,7 +257,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
 
     async def async_mute_volume(self, mute):
         self._attr_is_volume_muted = mute
-        await self.async_call('mute_volume', { 'is_volume_muted': mute })
+        await self.async_call('volume_mute', { 'is_volume_muted': mute })
 
     async def async_set_volume_level(self, volume: float):
         self._attr_volume_level = volume
@@ -556,6 +556,36 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             entry = self.hass.config_entries.async_get_entry(self.registry_entry.config_entry_id)
             if entry:
                 self._next_track_timing = entry.options.get(CONF_NEXT_TRACK_TIMING, DEFAULT_NEXT_TRACK_TIMING)
+
+    async def async_added_to_hass(self):
+        """当实体添加到 HA 时调用"""
+        # 监听底层播放器状态变化
+        self.async_on_remove(
+            async_track_state_change_event(
+                self.hass, [self.source_media_player], self._on_source_player_state_change
+            )
+        )
+        # 初始化同步一次状态
+        self._update_source_player_attributes()
+
+    def _on_source_player_state_change(self, event):
+        """底层播放器状态变化回调"""
+        self._update_source_player_attributes()
+        self.async_write_ha_state()
+
+    def _update_source_player_attributes(self):
+        """从底层播放器同步属性"""
+        state = self.hass.states.get(self.source_media_player)
+        if state:
+            # 同步音量
+            volume = state.attributes.get('volume_level')
+            if volume is not None:
+                self._attr_volume_level = volume
+            
+            # 同步静音状态
+            muted = state.attributes.get('is_volume_muted')
+            if muted is not None:
+                self._attr_is_volume_muted = muted
 
     # 调用服务
     async def async_call(self, service, service_data={}):

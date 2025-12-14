@@ -1,4 +1,5 @@
 import base64
+import time
 import requests
 from urllib.parse import parse_qsl, quote
 from homeassistant.components.http import HomeAssistantView
@@ -8,6 +9,9 @@ from .manifest import manifest
 
 DOMAIN = manifest.domain
 
+# 缓存过期时间（秒）
+CACHE_EXPIRE_SECONDS = 300  # 5 分钟
+
 class HttpView(HomeAssistantView):
 
     url = "/cloud_music/url"
@@ -16,6 +20,7 @@ class HttpView(HomeAssistantView):
 
     play_key = None
     play_url = None
+    play_time = None  # 缓存时间戳
 
     async def get(self, request):
 
@@ -38,9 +43,15 @@ class HttpView(HomeAssistantView):
         not_found_tips = quote(f'当前没有找到编号是{id}，歌名为{song}，作者是{singer}的播放链接')
         play_url = f'http://fanyi.baidu.com/gettts?lan=zh&text={not_found_tips}&spd=5&source=web'
 
-        # 缓存KEY
+        # 缓存KEY + 过期检查
         play_key = f'{id}{song}{singer}{source}'
-        if self.play_key == play_key:
+        current_time = time.time()
+        cache_valid = (
+            self.play_key == play_key 
+            and self.play_time is not None 
+            and (current_time - self.play_time) < CACHE_EXPIRE_SECONDS
+        )
+        if cache_valid:
             return web.HTTPFound(self.play_url)
 
         source = int(source)
@@ -71,7 +82,8 @@ class HttpView(HomeAssistantView):
                         play_url = result.url
 
         self.play_key = play_key
-        self.play_url = play_url     
+        self.play_url = play_url
+        self.play_time = time.time()  # 记录缓存时间
         # 重定向到可播放链接
         return web.HTTPFound(play_url)
 
