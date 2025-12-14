@@ -32,7 +32,9 @@ https://github.com/neteasecloudmusicapienhanced/api-enhanced
 
 👉 **[ha_ncloud_music_web](https://github.com/neqq3/ha_ncloud_music_web)**
 
-<img src="docs/assets/lyrics_web_preview_1.png" width="49%" /> <img src="docs/assets/lyrics_web_preview_2.png" width="49%" />
+![预览1](docs/assets/lyrics_web_preview_1.png)
+
+![预览2](docs/assets/lyrics_web_preview_2.png)
 
 ## 📚 媒体浏览器
 
@@ -51,7 +53,9 @@ https://github.com/neteasecloudmusicapienhanced/api-enhanced
 
 本插件自动创建以下实体，可直接添加到 Dashboard：
 
-<img src="docs/assets/dashboard_entities.png" width="49%" /> <img src="docs/assets/control_panel.png" width="49%" />
+| 实体卡片 | 控制面板 |
+|:---:|:---:|
+| ![实体](docs/assets/dashboard_entities.png) | ![控制](docs/assets/control_panel.png) |
 
 ## 🎲 真随机播放
 
