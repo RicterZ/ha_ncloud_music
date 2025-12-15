@@ -107,18 +107,44 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         # 获取当前时间
         new_updated_at = datetime.datetime.now()
         
-        # 自主计时（每秒+1）
-        if not hasattr(self, '_last_position_update') or self._last_position_update is None:
-            self._last_position_update = new_updated_at
-            self._attr_media_position = 0
-        else:
-            self._attr_media_position += 1
-            self._last_position_update = new_updated_at
-            self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
-        
         # 从底层读取duration（优先使用播放列表的 duration，回退到底层播放器）
         media_player = self.media_player
         if media_player is not None:
+            attrs = media_player.attributes
+            
+            # 智能进度同步：检测底层 position 是否在变化
+            source_position = attrs.get('media_position')
+            if source_position is not None:
+                source_position = int(source_position)
+                last_source_position = getattr(self, '_last_source_position', None)
+                
+                # 底层 position 有变化 → 同步底层进度（更准确）
+                if last_source_position is not None and source_position != last_source_position and source_position > 0:
+                    self._attr_media_position = source_position
+                    self._last_position_update = new_updated_at
+                    self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+                    self._last_source_position = source_position
+                    _LOGGER.debug(f"同步底层进度: {source_position}s (底层 position 变化)")
+                else:
+                    # 底层 position 无变化（如 OwnTone 一直是 0.01）→ 自主计时
+                    if not hasattr(self, '_last_position_update') or self._last_position_update is None:
+                        self._last_position_update = new_updated_at
+                        self._attr_media_position = 0
+                    else:
+                        self._attr_media_position += 1
+                        self._last_position_update = new_updated_at
+                        self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+                    self._last_source_position = source_position
+            else:
+                # 底层没有 position → 自主计时
+                if not hasattr(self, '_last_position_update') or self._last_position_update is None:
+                    self._last_position_update = new_updated_at
+                    self._attr_media_position = 0
+                else:
+                    self._attr_media_position += 1
+                    self._last_position_update = new_updated_at
+                    self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+            
             # 优先从播放列表获取 duration（云音乐 API 返回的准确值）
             playlist_duration = 0
             if hasattr(self, 'playlist') and len(self.playlist) > 0:
@@ -129,7 +155,6 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
                     pass
             
             # 从底层播放器获取 duration
-            attrs = media_player.attributes
             player_duration = int(attrs.get('media_duration', 0))
             
             # 优先使用播放列表的 duration（如果有效）
@@ -277,6 +302,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self._attr_media_position = 0
         self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
         self._last_position_update = None
+        self._last_source_position = None  # 重置底层进度记录，确保新歌正确同步
         self._next_track_scheduled = False  # 重置切歌调度标志
         
         # 判断是否为 FM 内部播放（播放 FM 播放列表中的歌曲）
@@ -758,6 +784,22 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
 
     def _on_source_player_state_change(self, event):
         """底层播放器状态变化回调"""
+        new_state = event.data.get('new_state')
+        old_state = event.data.get('old_state')
+        
+        if new_state is not None:
+            new_source_state = new_state.state
+            old_source_state = old_state.state if old_state else None
+            
+            # 核心修复：底层从非 playing 变成 playing 时，同步重置进度
+            # 这可以解决底层慢一拍启动导致的进度超前问题
+            if new_source_state == STATE_PLAYING and old_source_state != STATE_PLAYING:
+                if self._attr_state == STATE_PLAYING:
+                    _LOGGER.debug(f"底层播放器开始播放，同步重置进度计时 (之前进度: {self._attr_media_position}s)")
+                    self._attr_media_position = 0
+                    self._last_position_update = datetime.datetime.now()
+                    self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+        
         self._update_source_player_attributes()
         # 使用线程安全的方式调用 async_write_ha_state
         self.hass.loop.call_soon_threadsafe(self.async_write_ha_state)
