@@ -94,14 +94,6 @@ class JellyfinHandler:
             "IndexNumber": 1,
             "ParentIndexNumber": 1,
             "CanDownload": True,  # MA parser 必需
-            "MediaStreams": [{  # audio_format() 需要
-                "Codec": "mp3",
-                "Channels": 2,
-                "SampleRate": 44100,
-                "BitRate": 320000,
-                "BitDepth": 16,
-                "Type": "Audio"
-            }],
             "ImageTags": {"Primary": f"s_{song_id}"},
             "BackdropImageTags": [],
             "ProviderIds": {},  # 必需
@@ -112,7 +104,6 @@ class JellyfinHandler:
                 "Played": False
             },
             "MediaType": "Audio",
-            "Container": "mp3",
         }
     
     def _format_jellyfin_album(self, item: dict) -> dict:
