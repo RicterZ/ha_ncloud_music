@@ -855,7 +855,10 @@ class SubsonicApiView(HomeAssistantView):
         if not cover_id:
             return self._error_response(request, post_data, 10, "Missing id")
         
-        size = self._get_param(request, post_data, 'size', '300')
+        # 获取请求的尺寸参数（可选）
+        # 如果 MA 没有指定尺寸，则返回原图（最大清晰度）
+        # 参考 Jellyfin 实现：直接返回云音乐原始 picUrl，不添加尺寸限制
+        size = self._get_param(request, post_data, 'size', None)
         cover_url = None
         
         try:
@@ -883,10 +886,24 @@ class SubsonicApiView(HomeAssistantView):
             
             # 歌单封面 (p_xxx)
             elif cover_id.startswith('p_'):
-                real_id = cover_id[2:]
-                result = await cloud_music.netease_cloud_music(f'/playlist/detail?id={real_id}')
-                if result and result.get('playlist'):
-                    cover_url = result['playlist'].get('coverImgUrl', '')
+                # ========== 特殊处理：每日推荐封面 ==========
+                # 使用第一首推荐歌曲的专辑封面作为歌单封面
+                if cover_id == 'p_daily':
+                    try:
+                        songs = await cloud_music.async_get_dailySongs()
+                        if songs and len(songs) > 0:
+                            # 使用第一首歌的封面
+                            cover_url = songs[0].picUrl
+                            _LOGGER.debug(f"Subsonic getCoverArt: 每日推荐使用第一首歌封面 {cover_url[:50] if cover_url else 'None'}...")
+                    except Exception as e:
+                        _LOGGER.error(f"获取每日推荐封面失败: {e}")
+                # ========== 每日推荐封面处理结束 ==========
+                else:
+                    # 普通歌单封面
+                    real_id = cover_id[2:]
+                    result = await cloud_music.netease_cloud_music(f'/playlist/detail?id={real_id}')
+                    if result and result.get('playlist'):
+                        cover_url = result['playlist'].get('coverImgUrl', '')
             
             # 其他情况：尝试作为歌曲 ID
             else:
@@ -895,8 +912,10 @@ class SubsonicApiView(HomeAssistantView):
                     cover_url = result['songs'][0].get('al', {}).get('picUrl', '')
             
             if cover_url:
-                # 添加尺寸参数
-                cover_url = f"{cover_url}?param={size}y{size}"
+                # 只有当 MA 明确请求尺寸时才添加 ?param= 参数
+                # 否则返回原图（最大清晰度）
+                if size:
+                    cover_url = f"{cover_url}?param={size}y{size}"
                 
                 # 代理模式：获取图片数据并返回
                 import aiohttp

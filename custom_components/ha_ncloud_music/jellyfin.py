@@ -735,6 +735,26 @@ class JellyfinHandler:
             
             # 歌单
             elif decoded_id.startswith('pl_'):
+                # ========== 特殊处理：每日推荐 ==========
+                # pl_daily 是虚拟歌单，不存在于云音乐 API 中
+                # 返回虚拟歌单对象，让 MA 能够继续请求歌曲列表
+                if decoded_id == 'pl_daily':
+                    _LOGGER.info("Jellyfin GET_ITEM: 返回每日推荐虚拟歌单")
+                    daily_playlist = {
+                        "Id": "pl_daily",
+                        "Name": "📅 每日推荐",
+                        "Type": "Playlist",
+                        "MediaType": "Playlist",
+                        "IsFolder": False,
+                        "ImageTags": {"Primary": "pl_daily"},
+                        "BackdropImageTags": [],
+                        "ChildCount": 30,  # 每日推荐固定 30 首
+                        "UserData": {"IsFavorite": False}
+                    }
+                    return self._success_response(daily_playlist)
+                # ========== 每日推荐处理结束 ==========
+                
+                # 普通歌单处理
                 res = await self.cloud_music.netease_cloud_music(f'/playlist/detail?id={real_id}')
                 if res and res.get('playlist'):
                     playlist_data = {
@@ -811,12 +831,28 @@ class JellyfinHandler:
             
             # 歌单封面
             elif item_type == 'pl':
-                res = await self.cloud_music.netease_cloud_music(f'/playlist/detail?id={real_id}')
-                if res and res.get('playlist'):
-                    pic_url = res['playlist'].get('coverImgUrl', '')
-                    if pic_url:
-                        _LOGGER.info(f"✅ Jellyfin GET_IMAGE: 歌单封面 {pic_url[:50]}...")
-                        raise web.HTTPFound(pic_url)
+                # ========== 特殊处理：每日推荐封面 ==========
+                # 使用第一首推荐歌曲的专辑封面作为歌单封面
+                if decoded_id == 'pl_daily':
+                    try:
+                        songs = await self.cloud_music.async_get_dailySongs()
+                        if songs and len(songs) > 0:
+                            # 使用第一首歌的封面
+                            pic_url = songs[0].picUrl
+                            if pic_url:
+                                _LOGGER.info(f"✅ Jellyfin GET_IMAGE: 每日推荐封面 {pic_url[:50]}...")
+                                raise web.HTTPFound(pic_url)
+                    except Exception as e:
+                        _LOGGER.error(f"获取每日推荐封面失败: {e}")
+                # ========== 每日推荐封面处理结束 ==========
+                else:
+                    # 普通歌单封面
+                    res = await self.cloud_music.netease_cloud_music(f'/playlist/detail?id={real_id}')
+                    if res and res.get('playlist'):
+                        pic_url = res['playlist'].get('coverImgUrl', '')
+                        if pic_url:
+                            _LOGGER.info(f"✅ Jellyfin GET_IMAGE: 歌单封面 {pic_url[:50]}...")
+                            raise web.HTTPFound(pic_url)
         
         except web.HTTPFound:
             raise  # 重新抛出重定向异常
