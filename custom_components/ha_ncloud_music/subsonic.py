@@ -940,6 +940,24 @@ class SubsonicApiView(HomeAssistantView):
                 return self._response(request, post_data, {"playlists": {"playlist": []}})
             
             playlists = []
+            
+            # ========== 添加每日推荐（固定歌单，每天更新）==========
+            # 使用特殊 ID "p_daily"，始终显示在列表最前面
+            # 云音乐每天会为登录用户推荐 30 首歌曲
+            playlists.append({
+                "id": "p_daily",
+                "name": "📅 每日推荐",
+                "owner": "云音乐",
+                "public": True,
+                "songCount": 30,
+                "duration": 0,
+                "created": "2020-01-01T00:00:00.000Z",
+                "changed": "2020-01-01T00:00:00.000Z",
+                "coverArt": "p_daily"
+            })
+            # ========== 每日推荐添加结束 ==========
+            
+            # 添加用户的普通歌单
             for pl in result['playlist']:
                 playlist_id = pl.get('id')
                 playlists.append({
@@ -959,7 +977,7 @@ class SubsonicApiView(HomeAssistantView):
             if _searched_playlists_cache:
                 _LOGGER.info(f"Subsonic getPlaylists: 偷渡 {len(_searched_playlists_cache)} 个搜索歌单")
                 for pl in _searched_playlists_cache.values():
-                    playlists.insert(0, pl)  # 插入到最前面
+                    playlists.insert(1, pl)  # 插入到每日推荐之后
             
             _LOGGER.info(f"Subsonic getPlaylists: 返回 {len(playlists)} 个歌单（含偷渡）")
             return self._response(request, post_data, {
@@ -975,6 +993,57 @@ class SubsonicApiView(HomeAssistantView):
         if not playlist_id or not playlist_id.startswith('p_'):
             return self._error_response(request, post_data, 10, "Invalid playlist id")
         
+        # ========== 特殊处理：每日推荐 ==========
+        # 每日推荐使用固定 ID "p_daily"
+        # 调用云音乐 API /recommend/songs 获取今日推荐的 30 首歌曲
+        if playlist_id == 'p_daily':
+            try:
+                _LOGGER.info("Subsonic getPlaylist: 获取每日推荐歌单")
+                
+                # 调用 HA 集成中已实现的每日推荐 API
+                songs = await cloud_music.async_get_dailySongs()
+                if not songs:
+                    _LOGGER.warning("每日推荐歌曲列表为空")
+                    return self._error_response(request, post_data, 70, "Daily recommend not available")
+                
+                # 格式化歌曲列表
+                songs_list = []
+                for song in songs:
+                    songs_list.append({
+                        "id": f"s_{song.id}",
+                        "isDir": False,
+                        "title": song.song,
+                        "album": getattr(song, 'album', ''),
+                        "artist": song.singer,
+                        "duration": int(song.duration / 1000) if song.duration > 1000 else int(song.duration),
+                        "coverArt": f"s_{song.id}",
+                        "contentType": "audio/mpeg",
+                        "suffix": "mp3",
+                        "type": "music"
+                    })
+                
+                _LOGGER.info(f"Subsonic getPlaylist: 返回 {len(songs_list)} 首每日推荐歌曲")
+                
+                return self._response(request, post_data, {
+                    "playlist": {
+                        "id": "p_daily",
+                        "name": "📅 每日推荐",
+                        "owner": "云音乐",
+                        "public": True,
+                        "songCount": len(songs_list),
+                        "duration": sum(s.get('duration', 0) for s in songs_list),
+                        "created": "2020-01-01T00:00:00.000Z",
+                        "changed": "2020-01-01T00:00:00.000Z",
+                        "coverArt": "p_daily",
+                        "entry": songs_list
+                    }
+                })
+            except Exception as e:
+                _LOGGER.error(f"Subsonic getPlaylist (每日推荐) 失败: {e}", exc_info=True)
+                return self._error_response(request, post_data, 0, "Server error")
+        # ========== 每日推荐处理结束 ==========
+        
+        # 普通歌单处理：提取歌单 ID
         real_id = playlist_id[2:]
         
         try:
