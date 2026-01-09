@@ -1,4 +1,4 @@
-﻿import logging, datetime
+﻿import logging, datetime, asyncio
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -112,12 +112,47 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         if media_player is not None:
             attrs = media_player.attributes
             
+            # ========== 幽灵播放检测与恢复 ==========
+            # 检测代理 PLAYING 但底层 idle/off 的情况（幽灵播放）
+            # 连续 3 秒检测到则触发恢复（重新发送 play_media）
+            source_state = media_player.state
+            if source_state in (STATE_IDLE, STATE_OFF):
+                # 底层没在播放，累加幽灵播放计数
+                ghost_count = getattr(self, '_ghost_playback_count', 0) + 1
+                self._ghost_playback_count = ghost_count
+                
+                if ghost_count >= 3 and not getattr(self, '_recovery_in_progress', False):
+                    # 连续 3 秒幽灵播放，触发恢复
+                    _LOGGER.warning(f"检测到幽灵播放（连续 {ghost_count} 秒），尝试恢复播放")
+                    self._recovery_in_progress = True
+                    self._ghost_playback_count = 0
+                    
+                    # 重新发送当前歌曲的 play_media 命令
+                    if hasattr(self, '_attr_media_content_id') and self._attr_media_content_id:
+                        self.hass.loop.call_soon_threadsafe(
+                            lambda: self.hass.create_task(self._recover_playback())
+                        )
+                    else:
+                        _LOGGER.error("无法恢复：没有 media_content_id")
+                        self._recovery_in_progress = False
+                
+                # 幽灵播放时不累加 position，等待恢复
+                return
+            else:
+                # 底层正常播放，重置幽灵计数和恢复标志
+                self._ghost_playback_count = 0
+                self._recovery_in_progress = False
+            # ========== 幽灵播放检测结束 ==========
+            
             # 纯自主计时模式（配合底层开始播放时重置 _last_position_update 的机制）
             # 不再同步底层 position，因为底层有延迟会导致歌词不准
             if not hasattr(self, '_last_position_update') or self._last_position_update is None:
                 self._last_position_update = new_updated_at
                 self._attr_media_position = 0
             else:
+                # 修复：确保 position 不为 None
+                if self._attr_media_position is None:
+                    self._attr_media_position = 0
                 self._attr_media_position += 1
                 self._last_position_update = new_updated_at
                 self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
@@ -739,6 +774,35 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         if hasattr(self, 'playlist'):
             del self.playlist
 
+    async def _recover_playback(self):
+        """幽灵播放恢复：重新发送 play_media 命令"""
+        try:
+            media_content_id = self._attr_media_content_id
+            current_position = self._attr_media_position or 0
+            
+            _LOGGER.info(f"🔄 恢复播放: {self._attr_media_title}, 位置: {current_position}s")
+            
+            # 重新发送 play_media 到底层播放器
+            await self.async_call('play_media', {
+                'media_content_id': media_content_id,
+                'media_content_type': 'music'
+            })
+            
+            # 恢复完成后，尝试 seek 到之前的位置（如果播放器支持）
+            # 延迟 1 秒让播放器开始播放后再 seek
+            await asyncio.sleep(1)
+            if current_position > 2:
+                try:
+                    await self.async_call('media_seek', {'seek_position': current_position})
+                    _LOGGER.info(f"✅ 恢复播放并 seek 到 {current_position}s")
+                except Exception as e:
+                    _LOGGER.debug(f"Seek 失败（播放器可能不支持）: {e}")
+            
+        except Exception as e:
+            _LOGGER.error(f"恢复播放失败: {e}")
+        finally:
+            self._recovery_in_progress = False
+
     async def async_media_stop(self):
         await self.async_call('media_stop')
 
@@ -774,23 +838,35 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             old_source_state = old_state.state if old_state else None
             
             # 核心修复：底层从非 playing 变成 playing 时的处理
-            # 需要区分 "新歌开始播放" 和 "暂停后恢复播放" 两种情况
             if new_source_state == STATE_PLAYING and old_source_state != STATE_PLAYING:
+                # 首先：同步代理状态为 PLAYING（避免卡在 PAUSED）
+                if self._attr_state != STATE_PLAYING:
+                    _LOGGER.info(f"底层开始播放（{old_source_state} → playing），同步代理状态为 PLAYING")
+                    self._attr_state = STATE_PLAYING
+                
+                # 然后：处理进度重置
+                # 需要区分 "新歌开始播放" 和 "暂停后恢复播放" 两种情况
+                if getattr(self, '_is_new_track', False):
+                    _LOGGER.debug(f"新歌开始播放，重置自主计时起点")
+                    self._attr_media_position = 0
+                    self._last_position_update = None  # 设为 None，让 interval 从 0 开始计时
+                    self._last_source_position = None  # 重置底层进度记录
+                    self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+                    self._is_new_track = False  # 重置标志
+                else:
+                    # 暂停恢复：保留进度，只重置计时起点让 interval 继续累加
+                    _LOGGER.debug(f"暂停恢复，保留当前进度: {self._attr_media_position}s")
+                    self._last_position_update = datetime.datetime.now()
+                    self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+            
+            # 只同步暂停状态，不基于 idle 触发切歌
+            # 因为 DLNA 播放器在加载/缓冲时会频繁切换 playing和idle
+            # 切歌逻辑由 interval() 中的 duration - position 判断负责
+            elif new_source_state == STATE_PAUSED and old_source_state == STATE_PLAYING:
                 if self._attr_state == STATE_PLAYING:
-                    # 只有在 _is_new_track 标志为真时才重置进度（新歌场景）
-                    # 暂停恢复场景保留原有进度，继续计时
-                    if getattr(self, '_is_new_track', False):
-                        _LOGGER.debug(f"新歌开始播放，重置自主计时起点")
-                        self._attr_media_position = 0
-                        self._last_position_update = None  # 设为 None，让 interval 从 0 开始计时
-                        self._last_source_position = None  # 重置底层进度记录
-                        self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
-                        self._is_new_track = False  # 重置标志
-                    else:
-                        # 暂停恢复：保留进度，只重置计时起点让 interval 继续累加
-                        _LOGGER.debug(f"暂停恢复，保留当前进度: {self._attr_media_position}s")
-                        self._last_position_update = datetime.datetime.now()
-                        self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+                    _LOGGER.info(f"底层暂停，同步代理状态为 PAUSED")
+                    self._attr_state = STATE_PAUSED
+                    self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
         
         self._update_source_player_attributes()
         # 使用线程安全的方式调用 async_write_ha_state
