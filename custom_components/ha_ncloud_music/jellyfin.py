@@ -58,9 +58,13 @@ class JellyfinHandler:
             "ServerId": VIRTUAL_SERVER_ID
         })
     
-    def _format_jellyfin_song(self, item: dict) -> dict:
+    def _format_jellyfin_song(self, item: dict, quality_info: dict = None) -> dict:
         """
         基于 MA parse_track() 要求的完整字段
+        
+        Args:
+            item: 歌曲详情数据
+            quality_info: 音质信息(来自/song/url/v1),包含sr, br, type等
         """
         song_id = item.get('id')
         album_info = item.get('al', {}) or item.get('album', {}) or {}
@@ -79,7 +83,7 @@ class JellyfinHandler:
             album_id = song_id  # 使用歌曲ID作为虚拟专辑ID
         album_name = album_info.get('name', '未知专辑') if album_info else '未知专辑'
         
-        return {
+        result = {
             "Id": f"s_{song_id}",
             "Name": item.get('name', ''),
             "Type": "Audio",
@@ -105,6 +109,39 @@ class JellyfinHandler:
             },
             "MediaType": "Audio",
         }
+        
+        # 添加音质信息(MediaStreams)
+        if quality_info:
+            sr = quality_info.get('sr', 44100)
+            br = quality_info.get('br', 320000)
+            audio_type = quality_info.get('type', 'mp3')
+            
+            # 根据实际采样率推断位深度
+            bit_depth = None
+            if audio_type in ('flac', 'alac'):
+                if sr >= 96000:
+                    bit_depth = 24  # Hi-Res/环绕声
+                elif sr >= 48000:
+                    bit_depth = 24  # Hi-Res
+                else:
+                    bit_depth = 16  # CD标准
+            
+            media_stream = {
+                "Codec": audio_type,
+                "Type": "Audio",
+                "Channels": 2,
+                "SampleRate": sr,
+                "BitRate": br,
+                "Container": audio_type
+            }
+            
+            # 只有无损格式才添加位深度
+            if bit_depth:
+                media_stream["BitDepth"] = bit_depth
+            
+            result["MediaStreams"] = [media_stream]
+        
+        return result
     
     def _format_jellyfin_album(self, item: dict) -> dict:
         """基于 MA parse_album() 要求"""
@@ -244,7 +281,7 @@ class JellyfinHandler:
                     "Items": [
                         {
                             "Id": "netease_virtual_library",
-                            "Name": "网易云音乐",
+                            "Name": "云音乐",
                             "Type": "CollectionFolder",
                             "CollectionType": "music",
                             "ServerId": "netease_server",
@@ -657,7 +694,19 @@ class JellyfinHandler:
                 res = await self.cloud_music.netease_cloud_music(f'/song/detail?ids={real_id}')
                 
                 if res and res.get('songs'):
-                    song_data = self._format_jellyfin_song(res['songs'][0])
+                    # 获取实际音质信息(根据用户配置和账号权限)
+                    quality_info = None
+                    try:
+                        url_res = await self.cloud_music.netease_cloud_music(
+                            f'/song/url/v1?id={real_id}&level={self.cloud_music.audio_quality}'
+                        )
+                        if url_res and url_res.get('data'):
+                            quality_info = url_res['data'][0]
+                            _LOGGER.debug(f"Jellyfin: 获取音质信息 level={quality_info.get('level')}, sr={quality_info.get('sr')}")
+                    except Exception as e:
+                        _LOGGER.warning(f"Jellyfin: 获取音质信息失败 {e}")
+                    
+                    song_data = self._format_jellyfin_song(res['songs'][0], quality_info)
                     _LOGGER.info(f"✅ Jellyfin GET_ITEM: 歌曲找到 Name={song_data.get('Name')}")
                     return self._success_response(song_data)
                 else:

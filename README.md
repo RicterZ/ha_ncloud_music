@@ -84,9 +84,9 @@ https://github.com/neteasecloudmusicapienhanced/api-enhanced
 
 > **指定ID播放**
 
-- 播放网易云音乐歌单 `cloudmusic://163/playlist?id=25724904`
-- 播放网易云音乐电台 `cloudmusic://163/radio/playlist?id=1008`
-- 播放网易云音乐歌手 `cloudmusic://163/artist/playlist?id=2116`
+- 播放云音乐歌单 `cloudmusic://163/playlist?id=25724904`
+- 播放云音乐电台 `cloudmusic://163/radio/playlist?id=1008`
+- 播放云音乐歌手 `cloudmusic://163/artist/playlist?id=2116`
 - 播放喜马拉雅专辑 `cloudmusic://xmly/playlist?id=258244`
 
 > **搜索播放**

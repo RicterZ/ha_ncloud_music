@@ -704,7 +704,7 @@ class SubsonicApiView(HomeAssistantView):
         return self._response(request, post_data, result)
     
     def _format_song_from_api(self, item: dict) -> str:
-        """将网易云 API 返回的歌曲数据转换为 Subsonic song XML"""
+        """将云音乐 API 返回的歌曲数据转换为 Subsonic song XML"""
         song_id = f"s_{item.get('id')}"
         
         title = self._xml_escape(item.get('name', ''))
@@ -725,8 +725,13 @@ class SubsonicApiView(HomeAssistantView):
             f'contentType="audio/mpeg" suffix="mp3"/>'
         )
     
-    def _format_song_from_api_dict(self, item: dict) -> dict:
-        """将网易云 API 返回的歌曲数据转换为 Subsonic JSON 格式"""
+    def _format_song_from_api_dict(self, item: dict, quality_info: dict = None) -> dict:
+        """将云音乐 API 返回的歌曲数据转换为 Subsonic JSON 格式
+        
+        Args:
+            item: 歌曲详情数据
+            quality_info: 可选,从/song/url/v1获取的实际音质信息
+        """
         song_id = f"s_{item.get('id')}"
         artists = item.get('ar', [])
         album_info = item.get('al', {})
@@ -734,6 +739,41 @@ class SubsonicApiView(HomeAssistantView):
         
         # 尝试获取封面 URL（云音乐api搜索结果中专辑信息包含 picUrl）
         cover_url = album_info.get('picUrl', '')
+        
+        # 首先尝试使用传入的实际音质信息
+        if quality_info:
+            sr = quality_info.get('sr', 44100)
+            br = quality_info.get('br', 320000)
+            audio_type = quality_info.get('type', 'mp3')
+            size = quality_info.get('size', 0)
+            
+            # 根据实际格式判断
+            if audio_type in ('flac', 'alac'):
+                suffix = 'flac'
+                content_type = 'audio/flac'
+                if sr >= 96000:
+                    bit_depth = 24
+                elif sr >= 48000:
+                    bit_depth = 24
+                else:
+                    bit_depth = 16
+            else:
+                suffix = 'mp3'
+                content_type = 'audio/mpeg'
+                bit_depth = None
+            
+            quality_data = {
+                'suffix': suffix,
+                'contentType': content_type,
+                'bitRate': br // 1000,
+                'samplingRate': sr,
+                'size': size,
+                'channelCount': 2,
+                'bitDepth': bit_depth
+            }
+        else:
+            # Fallback: 从歌曲详情数据推断
+            quality_data = self._get_quality_from_song_data(item)
         
         result = {
             "id": song_id,
@@ -745,15 +785,135 @@ class SubsonicApiView(HomeAssistantView):
             "track": item.get('no', 0),
             "year": 0,
             "duration": int(item.get('dt', 0) / 1000),
-            "size": 0,
-            "suffix": "mp3",
-            "contentType": "audio/mpeg",
+            "size": quality_data.get('size', 0),
+            "suffix": quality_data.get('suffix', 'mp3'),
+            "contentType": quality_data.get('contentType', 'audio/mpeg'),
             "coverArt": song_id,  # 使用 ID，MA 会调用 getCoverArt
             "albumId": f"al_{album_id}" if album_id else "",
             "artistId": f"ar_{artists[0].get('id', '')}" if artists else "",
             "type": "music",
             "created": "2020-01-01T00:00:00.000Z"
         }
+        
+        # 添加OpenSubsonic扩展字段
+        if quality_data.get('bitRate'):
+            result["bitRate"] = quality_data['bitRate']
+        if quality_data.get('samplingRate'):
+            result["samplingRate"] = quality_data['samplingRate']
+        if quality_data.get('bitDepth'):
+            result["bitDepth"] = quality_data['bitDepth']
+        if quality_data.get('channelCount'):
+            result["channelCount"] = quality_data['channelCount']
+        
+        return result
+    
+    def _get_quality_from_song_data(self, item: dict, cloud_music=None) -> dict:
+        """从歌曲数据推断音质信息或从API获取实际音质"""
+        song_id = item.get('id')
+        
+        # 优先尝试从API获取实际音质(包含jyeffect等黑胶VIP音质)
+        if cloud_music and song_id:
+            try:
+                import asyncio
+                # 获取实际音质信息
+                url_res = asyncio.create_task(
+                    cloud_music.netease_cloud_music(
+                        f'/song/url/v1?id={song_id}&level={cloud_music.audio_quality}'
+                    )
+                )
+                # 等待结果(这是在async函数中)
+                url_data = asyncio.get_event_loop().run_until_complete(url_res)
+                
+                if url_data and url_data.get('data'):
+                    quality_info = url_data['data'][0]
+                    sr = quality_info.get('sr', 44100)
+                    br = quality_info.get('br', 320000)
+                    audio_type = quality_info.get('type', 'mp3')
+                    size = quality_info.get('size', 0)
+                    
+                    # 根据实际格式判断
+                    if audio_type in ('flac', 'alac'):
+                        suffix = 'flac'
+                        content_type = 'audio/flac'
+                        # 推断位深度
+                        if sr >= 96000:
+                            bit_depth = 24
+                        elif sr >= 48000:
+                            bit_depth = 24
+                        else:
+                            bit_depth = 16
+                    else:
+                        suffix = 'mp3'
+                        content_type = 'audio/mpeg'
+                        bit_depth = None
+                    
+                    result = {
+                        'suffix': suffix,
+                        'contentType': content_type,
+                        'bitRate': br // 1000,  # kbps
+                        'samplingRate': sr,
+                        'size': size,
+                        'channelCount': 2
+                    }
+                    
+                    if bit_depth:
+                        result['bitDepth'] = bit_depth
+                    
+                    _LOGGER.debug(f"Subsonic: 从API获取音质 id={song_id}, sr={sr}, type={audio_type}")
+                    return result
+            except Exception as e:
+                _LOGGER.debug(f"Subsonic: 无法从API获取音质,使用推断方式: {e}")
+        
+        # Fallback: 从歌曲详情数据推断
+        # /song/detail 返回的数据中包含各音质版本信息
+        hr = item.get('hr')  # Hi-Res
+        sq = item.get('sq')  # 无损
+        h = item.get('h')    # 高(320k)
+        m = item.get('m')    # 中(192k)
+        l = item.get('l')    # 低(128k)
+        
+        # 按优先级选择可用音质
+        quality = hr or sq or h or m or l
+        
+        if not quality:
+            # 无音质信息,返回默认值
+            return {
+                'suffix': 'mp3',
+                'contentType': 'audio/mpeg',
+                'size': 0
+            }
+        
+        br = quality.get('br', 320000)
+        sr = quality.get('sr', 44100)
+        size = quality.get('size', 0)
+        
+        # 根据比特率判断格式
+        if br >= 900000:  # 无损或Hi-Res
+            suffix = 'flac'
+            content_type = 'audio/flac'
+            # 推断位深度
+            if sr >= 96000:
+                bit_depth = 24
+            elif sr >= 48000:
+                bit_depth = 24
+            else:
+                bit_depth = 16
+        else:
+            suffix = 'mp3'
+            content_type = 'audio/mpeg'
+            bit_depth = None
+        
+        result = {
+            'suffix': suffix,
+            'contentType': content_type,
+            'bitRate': br // 1000,  # 转换为 kbps
+            'samplingRate': sr,
+            'size': size,
+            'channelCount': 2
+        }
+        
+        if bit_depth:
+            result['bitDepth'] = bit_depth
         
         return result
     
@@ -805,8 +965,21 @@ class SubsonicApiView(HomeAssistantView):
             result = await cloud_music.netease_cloud_music(f'/song/detail?ids={real_id}')
             if result and result.get('songs'):
                 song_data = result['songs'][0]
+                
+                # 获取实际音质信息
+                quality_info = None
+                try:
+                    url_res = await cloud_music.netease_cloud_music(
+                        f'/song/url/v1?id={real_id}&level={cloud_music.audio_quality}'
+                    )
+                    if url_res and url_res.get('data'):
+                        quality_info = url_res['data'][0]
+                        _LOGGER.debug(f"Subsonic getSong: 音质 id={real_id}, sr={quality_info.get('sr')}, type={quality_info.get('type')}")
+                except Exception as e:
+                    _LOGGER.warning(f"Subsonic getSong: 获取音质失败 {e}")
+                
                 return self._response(request, post_data, {
-                    "song": self._format_song_from_api_dict(song_data)
+                    "song": self._format_song_from_api_dict(song_data, quality_info)
                 })
         except Exception as e:
             _LOGGER.error(f"Subsonic getSong 失败: {e}")
