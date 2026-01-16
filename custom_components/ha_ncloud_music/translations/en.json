@@ -7,7 +7,7 @@
     "step": {
       "user": {
         "title": "API Configuration",
-        "description": "To prevent your password from leaking, it is recommended to deploy the API service yourself.\nFree deployment guide: https://neteasecloudmusicapi.vercel.app\nIf you can't set it up, you can also use the paid service maintained by me 😊",
+        "description": "To prevent your password from leaking, it is recommended to deploy the API service yourself.\nFree deployment guide: https://neteasecloudmusicapienhanced.js.org/",
         "data": {
           "url": "NetEase Cloud Music API"
         }
