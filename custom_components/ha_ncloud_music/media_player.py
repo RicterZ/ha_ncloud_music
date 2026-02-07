@@ -71,6 +71,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self._attr_name = f'{manifest.name} {source_media_player.split(".")[1]}'
         self._attr_unique_id = f'{manifest.domain}{source_media_player}'
         self._attr_state =  STATE_ON
+        self._cloud_music_active = False  # 仅在通过插件播放音乐时为 True
         self._attr_volume_level = 1
         self._attr_repeat = 'all'
         self._attr_shuffle = False
@@ -102,6 +103,9 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         """定时器回调 - 参考lsCoding666实现"""
         # 暂停时不更新
         if self._attr_state != STATE_PLAYING:
+            return
+        # 仅在云音乐会话期间更新，避免误触发视频播放切歌
+        if not getattr(self, '_cloud_music_active', False):
             return
         
         # 获取当前时间
@@ -308,6 +312,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
     async def async_play_media(self, media_type, media_id, **kwargs):
 
         self._attr_state = STATE_PAUSED
+        self._cloud_music_active = True
         # 重置进度计时
         self._attr_media_position = 0
         self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
@@ -389,6 +394,9 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self.async_write_ha_state()  # 通知 HA 更新状态
 
     async def async_media_pause(self):
+        if not self._cloud_music_active:
+            _LOGGER.info("忽略暂停：当前未在云音乐会话中，防止暂停外部视频")
+            return
         self._attr_state = STATE_PAUSED
         await self.async_call('media_pause')
         self.async_write_ha_state()  # 通知 HA 更新状态
@@ -638,6 +646,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         # 4. 开始播放第一首
         first_song = tracks[0]
         self._attr_state = STATE_PLAYING
+        self._cloud_music_active = True
         self._attr_media_position = 0
         self._last_position_update = None
         self._next_track_scheduled = False
@@ -747,6 +756,9 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
 
 
     async def async_media_next_track(self):
+        if not self._cloud_music_active:
+            _LOGGER.info("忽略下一曲：当前未在云音乐会话中")
+            return
         self._attr_state = STATE_PAUSED
         await self.cloud_music.async_media_next_track(self, self._attr_shuffle)
         
@@ -755,10 +767,16 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             await self._async_preload_fm_tracks()
 
     async def async_media_previous_track(self):
+        if not self._cloud_music_active:
+            _LOGGER.info("忽略上一曲：当前未在云音乐会话中")
+            return
         self._attr_state = STATE_PAUSED
         await self.cloud_music.async_media_previous_track(self, self._attr_shuffle)
 
     async def async_media_seek(self, position):
+        if not self._cloud_music_active:
+            _LOGGER.info("忽略快进：当前未在云音乐会话中")
+            return
         # 先执行 seek 操作
         await self.async_call('media_seek', { 'seek_position': position })
         
@@ -804,6 +822,10 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             self._recovery_in_progress = False
 
     async def async_media_stop(self):
+        if not self._cloud_music_active:
+            _LOGGER.info("忽略停止：当前未在云音乐会话中")
+            return
+        self._cloud_music_active = False
         await self.async_call('media_stop')
 
     # 更新属性
@@ -836,6 +858,31 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         if new_state is not None:
             new_source_state = new_state.state
             old_source_state = old_state.state if old_state else None
+            content_type = new_state.attributes.get('media_content_type')
+            content_id = new_state.attributes.get('media_content_id')
+
+            # 检测是否为云音乐会话内容，否则视为外部播放（例如 Apple TV 视频）
+            is_cloud_music = self._cloud_music_active
+            if self._attr_media_content_id and content_id:
+                if str(self._attr_media_content_id) in str(content_id) or str(content_id) in str(self._attr_media_content_id):
+                    is_cloud_music = True
+                elif content_type and content_type != 'music':
+                    is_cloud_music = False
+            elif content_type and content_type != 'music':
+                is_cloud_music = False
+
+            if not is_cloud_music:
+                if self._cloud_music_active:
+                    _LOGGER.info("检测到外部媒体接管，重置云音乐状态以避免联动控制视频")
+                self._cloud_music_active = False
+                self._attr_state = STATE_IDLE
+                self.before_state = None
+                self._last_position_update = None
+                self._next_track_scheduled = False
+                self._is_new_track = False
+                self._update_source_player_attributes()
+                self.hass.loop.call_soon_threadsafe(self.async_write_ha_state)
+                return
             
             # 核心修复：底层从非 playing 变成 playing 时的处理
             if new_source_state == STATE_PLAYING and old_source_state != STATE_PLAYING:
