@@ -72,6 +72,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self._attr_unique_id = f'{manifest.domain}{source_media_player}'
         self._attr_state =  STATE_ON
         self._cloud_music_active = False  # 仅在通过插件播放音乐时为 True
+        self._external_takeover = False   # 底层被外部媒体（视频等）占用
         self._attr_volume_level = 1
         self._attr_repeat = 'all'
         self._attr_shuffle = False
@@ -103,6 +104,9 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         """定时器回调 - 参考lsCoding666实现"""
         # 暂停时不更新
         if self._attr_state != STATE_PLAYING:
+            return
+        # 外部占用时不更新
+        if getattr(self, '_external_takeover', False):
             return
         # 仅在云音乐会话期间更新，避免误触发视频播放切歌
         if not getattr(self, '_cloud_music_active', False):
@@ -313,6 +317,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
 
         self._attr_state = STATE_PAUSED
         self._cloud_music_active = True
+        self._external_takeover = False
         # 重置进度计时
         self._attr_media_position = 0
         self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
@@ -389,18 +394,22 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self.before_state = None
 
     async def async_media_play(self):
+        # 如果已被外部媒体占用，使用云音乐的 media_content_id 重新发起播放，避免触发视频 resume
+        if self._external_takeover or not self._cloud_music_active:
+            resumed = await self._restart_cloud_playback()
+            if resumed:
+                return
         # 重新明确进入云音乐会话，允许后续控制
         self._cloud_music_active = True
+        self._external_takeover = False
         self._attr_state = STATE_PLAYING
         await self.async_call('media_play')
         self.async_write_ha_state()  # 通知 HA 更新状态
 
     async def async_media_pause(self):
-        # 暂停视为退出云音乐会话，避免后续外部视频被联动
-        if not self._cloud_music_active:
+        if self._external_takeover or not self._cloud_music_active:
             _LOGGER.info("忽略暂停：当前未在云音乐会话中，防止暂停外部视频")
             return
-        self._cloud_music_active = False
         self._attr_state = STATE_PAUSED
         await self.async_call('media_pause')
         self.async_write_ha_state()  # 通知 HA 更新状态
@@ -651,6 +660,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         first_song = tracks[0]
         self._attr_state = STATE_PLAYING
         self._cloud_music_active = True
+        self._external_takeover = False
         self._attr_media_position = 0
         self._last_position_update = None
         self._next_track_scheduled = False
@@ -760,9 +770,13 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
 
 
     async def async_media_next_track(self):
-        if not self._cloud_music_active:
-            _LOGGER.info("忽略下一曲：当前未在云音乐会话中")
-            return
+        if self._external_takeover:
+            _LOGGER.info("检测到外部占用，重新接管再切下一曲")
+            takeover_handled = await self._restart_cloud_playback()
+            if not takeover_handled:
+                return
+        self._cloud_music_active = True
+        self._external_takeover = False
         self._attr_state = STATE_PAUSED
         await self.cloud_music.async_media_next_track(self, self._attr_shuffle)
         
@@ -771,15 +785,19 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             await self._async_preload_fm_tracks()
 
     async def async_media_previous_track(self):
-        if not self._cloud_music_active:
-            _LOGGER.info("忽略上一曲：当前未在云音乐会话中")
-            return
+        if self._external_takeover:
+            _LOGGER.info("检测到外部占用，重新接管再切上一曲")
+            takeover_handled = await self._restart_cloud_playback()
+            if not takeover_handled:
+                return
+        self._cloud_music_active = True
+        self._external_takeover = False
         self._attr_state = STATE_PAUSED
         await self.cloud_music.async_media_previous_track(self, self._attr_shuffle)
 
     async def async_media_seek(self, position):
-        if not self._cloud_music_active:
-            _LOGGER.info("忽略快进：当前未在云音乐会话中")
+        if self._external_takeover or not self._cloud_music_active:
+            _LOGGER.info("忽略快进：当前未在云音乐会话中或已被外部媒体占用")
             return
         # 先执行 seek 操作
         await self.async_call('media_seek', { 'seek_position': position })
@@ -825,11 +843,42 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         finally:
             self._recovery_in_progress = False
 
+    async def _restart_cloud_playback(self):
+        """外部占用后重新接管播放，避免 resume 视频"""
+        media_content_id = self._attr_media_content_id
+        if not media_content_id and hasattr(self, 'playlist') and len(self.playlist) > 0:
+            try:
+                media_content_id = self.playlist[self.playindex].url
+            except Exception:
+                media_content_id = None
+        if not media_content_id:
+            _LOGGER.warning("无法重新接管云音乐：缺少 media_content_id")
+            return False
+
+        self._cloud_music_active = True
+        self._external_takeover = False
+        self._attr_state = STATE_PAUSED
+        self._attr_media_position = 0
+        self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+        self._last_position_update = None
+        self._next_track_scheduled = False
+        self._is_new_track = True
+
+        await self.async_call('play_media', {
+            'media_content_id': media_content_id,
+            'media_content_type': 'music'
+        })
+        self._attr_media_content_id = media_content_id
+        self._attr_state = STATE_PLAYING
+        self.async_write_ha_state()
+        return True
+
     async def async_media_stop(self):
-        if not self._cloud_music_active:
+        if self._external_takeover or not self._cloud_music_active:
             _LOGGER.info("忽略停止：当前未在云音乐会话中")
             return
         self._cloud_music_active = False
+        self._external_takeover = False
         await self.async_call('media_stop')
 
     # 更新属性
@@ -879,6 +928,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
                 if self._cloud_music_active:
                     _LOGGER.info("检测到外部媒体接管，重置云音乐状态以避免联动控制视频")
                 self._cloud_music_active = False
+                self._external_takeover = True
                 self._attr_state = STATE_IDLE
                 self.before_state = None
                 self._last_position_update = None
@@ -887,6 +937,9 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
                 self._update_source_player_attributes()
                 self.hass.loop.call_soon_threadsafe(self.async_write_ha_state)
                 return
+            else:
+                # 底层确认是云音乐内容，清除外部占用标记
+                self._external_takeover = False
             
             # 核心修复：底层从非 playing 变成 playing 时的处理
             if new_source_state == STATE_PLAYING and old_source_state != STATE_PLAYING:
