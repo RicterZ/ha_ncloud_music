@@ -389,14 +389,18 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self.before_state = None
 
     async def async_media_play(self):
+        # 重新明确进入云音乐会话，允许后续控制
+        self._cloud_music_active = True
         self._attr_state = STATE_PLAYING
         await self.async_call('media_play')
         self.async_write_ha_state()  # 通知 HA 更新状态
 
     async def async_media_pause(self):
+        # 暂停视为退出云音乐会话，避免后续外部视频被联动
         if not self._cloud_music_active:
             _LOGGER.info("忽略暂停：当前未在云音乐会话中，防止暂停外部视频")
             return
+        self._cloud_music_active = False
         self._attr_state = STATE_PAUSED
         await self.async_call('media_pause')
         self.async_write_ha_state()  # 通知 HA 更新状态
