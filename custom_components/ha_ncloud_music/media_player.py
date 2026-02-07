@@ -394,9 +394,9 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self.before_state = None
 
     async def async_media_play(self):
-        # 如果已被外部媒体占用，使用云音乐的 media_content_id 重新发起播放，避免触发视频 resume
+        # 如果已被外部媒体占用或会话已退出，重新接管并保持暂停，等底层真正播放后再变为 PLAYING
         if self._external_takeover or not self._cloud_music_active:
-            resumed = await self._restart_cloud_playback()
+            resumed = await self._restart_cloud_playback(resume=True)
             if resumed:
                 return
         # 重新明确进入云音乐会话，允许后续控制
@@ -410,6 +410,10 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         if self._external_takeover or not self._cloud_music_active:
             _LOGGER.info("忽略暂停：当前未在云音乐会话中，防止暂停外部视频")
             return
+        # 暂停视为退出本次云音乐会话，避免后续视频状态被当作云音乐恢复
+        self._cloud_music_active = False
+        # 记录暂停位置用于恢复
+        self._paused_position = self._attr_media_position or 0
         self._attr_state = STATE_PAUSED
         await self.async_call('media_pause')
         self.async_write_ha_state()  # 通知 HA 更新状态
@@ -843,7 +847,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         finally:
             self._recovery_in_progress = False
 
-    async def _restart_cloud_playback(self):
+    async def _restart_cloud_playback(self, resume=False):
         """外部占用后重新接管播放，避免 resume 视频"""
         media_content_id = self._attr_media_content_id
         if not media_content_id and hasattr(self, 'playlist') and len(self.playlist) > 0:
@@ -858,7 +862,8 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self._cloud_music_active = True
         self._external_takeover = False
         self._attr_state = STATE_PAUSED
-        self._attr_media_position = 0
+        # 若需要resume且有记录的暂停位置，就用暂停位置；否则从0开始
+        self._attr_media_position = getattr(self, '_paused_position', 0 if resume else 0)
         self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
         self._last_position_update = None
         self._next_track_scheduled = False
@@ -869,7 +874,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             'media_content_type': 'music'
         })
         self._attr_media_content_id = media_content_id
-        self._attr_state = STATE_PLAYING
+        # 不直接置为 PLAYING，等待底层状态回调确认
         self.async_write_ha_state()
         return True
 
@@ -914,15 +919,15 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             content_type = new_state.attributes.get('media_content_type')
             content_id = new_state.attributes.get('media_content_id')
 
-            # 检测是否为云音乐会话内容，否则视为外部播放（例如 Apple TV 视频）
-            is_cloud_music = self._cloud_music_active
-            if self._attr_media_content_id and content_id:
-                if str(self._attr_media_content_id) in str(content_id) or str(content_id) in str(self._attr_media_content_id):
+            # 判定：只有在云音乐会话且底层 content_type=music 且 ID 匹配/未知 时才认为是云音乐
+            is_cloud_music = False
+            if self._cloud_music_active and content_type == 'music':
+                if self._attr_media_content_id and content_id:
+                    if str(self._attr_media_content_id) in str(content_id) or str(content_id) in str(self._attr_media_content_id):
+                        is_cloud_music = True
+                else:
+                    # 无法匹配 ID，但类型是 music，且当前会话标记为云音乐
                     is_cloud_music = True
-                elif content_type and content_type != 'music':
-                    is_cloud_music = False
-            elif content_type and content_type != 'music':
-                is_cloud_music = False
 
             if not is_cloud_music:
                 if self._cloud_music_active:
@@ -940,6 +945,9 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             else:
                 # 底层确认是云音乐内容，清除外部占用标记
                 self._external_takeover = False
+                # 当云音乐会话被标记为非活动时，不要自动将状态切到播放，保持现状
+                if not self._cloud_music_active:
+                    return
             
             # 核心修复：底层从非 playing 变成 playing 时的处理
             if new_source_state == STATE_PLAYING and old_source_state != STATE_PLAYING:
@@ -958,8 +966,11 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
                     self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
                     self._is_new_track = False  # 重置标志
                 else:
-                    # 暂停恢复：保留进度，只重置计时起点让 interval 继续累加
-                    _LOGGER.debug(f"暂停恢复，保留当前进度: {self._attr_media_position}s")
+                    # 暂停恢复：若有记录的暂停位置，恢复到该位置
+                    paused_pos = getattr(self, '_paused_position', None)
+                    if paused_pos is not None:
+                        self._attr_media_position = paused_pos
+                    _LOGGER.debug(f"暂停恢复，进度: {self._attr_media_position}s")
                     self._last_position_update = datetime.datetime.now()
                     self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
             
