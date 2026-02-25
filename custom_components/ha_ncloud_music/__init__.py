@@ -44,6 +44,10 @@ SERVICE_FM_TRASH_SCHEMA = vol.Schema({
     vol.Optional('entity_id'): cv.entity_id,
 })
 
+SERVICE_STOP_SCHEMA = vol.Schema({
+    vol.Optional('entity_id'): cv.entity_id,
+})
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
@@ -297,6 +301,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await media_player_obj.async_fm_trash()
         except Exception as e:
             _LOGGER.error(f"FM 垃圾桶操作失败: {e}")
+
+    async def handle_stop(call: ServiceCall):
+        """
+        Service: ha_ncloud_music.stop
+        停止播放
+        """
+        entity_id = call.data.get('entity_id')
+        _LOGGER.info("⏹️ Service Call: stop")
+
+        player = await _get_media_player(entity_id)
+        if not player:
+            _LOGGER.error("找不到可用的媒体播放器")
+            return
+
+        target_entity_id = entity_id or player.entity_id
+        await hass.services.async_call(
+            'media_player',
+            'media_stop',
+            {'entity_id': target_entity_id}
+        )
     
     # 注册服务
     hass.services.async_register(
@@ -317,8 +341,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(
         DOMAIN, 'fm_trash', handle_fm_trash, schema=SERVICE_FM_TRASH_SCHEMA
     )
+    hass.services.async_register(
+        DOMAIN, 'stop', handle_stop, schema=SERVICE_STOP_SCHEMA
+    )
     
-    _LOGGER.info("✅ 已注册 Service Call: search, play_by_id, play_daily, play_favorites, play_fm, fm_trash")
+    _LOGGER.info("✅ 已注册 Service Call: search, play_by_id, play_daily, play_favorites, play_fm, fm_trash, stop")
     
     return True
 
@@ -335,5 +362,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_remove(DOMAIN, 'play_favorites')
     hass.services.async_remove(DOMAIN, 'play_fm')
     hass.services.async_remove(DOMAIN, 'fm_trash')
+    hass.services.async_remove(DOMAIN, 'stop')
     
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)

@@ -138,3 +138,15 @@ fm_trash:
       selector:
         entity:
           domain: media_player
+
+stop:
+  name: 停止播放
+  description: 停止当前云音乐播放
+  fields:
+    entity_id:
+      name: 播放器
+      description: 目标媒体播放器（可选）
+      required: false
+      selector:
+        entity:
+          domain: media_player
