@@ -158,3 +158,6 @@ migration/
 # Development notes - DO NOT COMMIT
 .ha_dev/
 docs/SUBSONIC_DEBUG.md
+
+# HAOS deployment scripts - DO NOT COMMIT
+/scripts/

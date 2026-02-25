@@ -96,6 +96,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self._fm_mode = None           # 当前 FM 模式名称（None = 普通模式）
         self._is_fm_playing = False    # 是否处于 FM 播放模式
         self._fm_preloading = False    # 是否正在预加载 FM 歌曲（防止重复请求）
+        self._manual_stop_requested = False  # 手动停止后，禁止幽灵恢复自动拉起播放
 
 
     def interval(self, now):
@@ -117,6 +118,12 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             # 连续 3 秒检测到则触发恢复（重新发送 play_media）
             source_state = media_player.state
             if source_state in (STATE_IDLE, STATE_OFF):
+                if self._manual_stop_requested:
+                    # 用户明确执行 stop 后，不应触发自动恢复
+                    self._ghost_playback_count = 0
+                    self._recovery_in_progress = False
+                    return
+
                 # 底层没在播放，累加幽灵播放计数
                 ghost_count = getattr(self, '_ghost_playback_count', 0) + 1
                 self._ghost_playback_count = ghost_count
@@ -306,6 +313,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         await self.async_call('volume_set', { 'volume_level': volume })
 
     async def async_play_media(self, media_type, media_id, **kwargs):
+        self._manual_stop_requested = False
 
         self._attr_state = STATE_PAUSED
         # 重置进度计时
@@ -384,6 +392,7 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self.before_state = None
 
     async def async_media_play(self):
+        self._manual_stop_requested = False
         self._attr_state = STATE_PLAYING
         await self.async_call('media_play')
         self.async_write_ha_state()  # 通知 HA 更新状态
@@ -776,6 +785,10 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
 
     async def _recover_playback(self):
         """幽灵播放恢复：重新发送 play_media 命令"""
+        if self._manual_stop_requested:
+            self._recovery_in_progress = False
+            return
+
         try:
             media_content_id = self._attr_media_content_id
             current_position = self._attr_media_position or 0
@@ -804,7 +817,14 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             self._recovery_in_progress = False
 
     async def async_media_stop(self):
+        self._manual_stop_requested = True
+        self._ghost_playback_count = 0
+        self._recovery_in_progress = False
+        self._next_track_scheduled = False
+        self.before_state = None
+        self._attr_state = STATE_IDLE
         await self.async_call('media_stop')
+        self.async_write_ha_state()
 
     # 更新属性
     async def async_update(self):
