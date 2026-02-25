@@ -121,6 +121,9 @@ https://github.com/neteasecloudmusicapienhanced/api-enhanced
 | `ha_ncloud_music.play_by_id` | 通过 ID 精准播放歌曲、歌单、专辑或电台 | ID：`25724904` |
 | `ha_ncloud_music.play_daily` | 播放每日推荐歌单 | - |
 | `ha_ncloud_music.play_favorites` | 播放"我喜欢的音乐" | - |
+| `ha_ncloud_music.play_fm` | 播放私人 FM（支持模式） | 模式：`AI DJ` |
+| `ha_ncloud_music.fm_trash` | 私人 FM 不喜欢并切到下一首 | - |
+| `ha_ncloud_music.stop` | 停止当前云音乐播放 | - |
 
 > 💡 **提示**：支持组合搜索，输入 `歌手名 歌曲名` 可提高匹配准确度。
 
