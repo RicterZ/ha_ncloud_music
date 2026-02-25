@@ -97,6 +97,13 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self._is_fm_playing = False    # 是否处于 FM 播放模式
         self._fm_preloading = False    # 是否正在预加载 FM 歌曲（防止重复请求）
         self._manual_stop_requested = False  # 手动停止后，禁止幽灵恢复自动拉起播放
+        # 外部接管检测（TTS/自动化等使用同一个底层播放器）
+        self._external_playback_active = False
+        self._state_before_external_playback = STATE_IDLE
+        # 本集成触发 play/play_media 后，允许一段时间内的 source->playing 视为预期行为
+        self._expect_source_playing_until = 0.0
+        # 外部接管结束后，用户按播放时强制恢复本集成歌曲，避免恢复到 TTS 音频
+        self._resume_with_owned_media = False
 
 
     def interval(self, now):
@@ -117,6 +124,11 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             # 检测代理 PLAYING 但底层 idle/off 的情况（幽灵播放）
             # 连续 3 秒检测到则触发恢复（重新发送 play_media）
             source_state = media_player.state
+            # 外部接管期间，禁止幽灵恢复，避免 TTS 结束后误拉起历史歌曲
+            if self._external_playback_active:
+                self._ghost_playback_count = 0
+                self._recovery_in_progress = False
+                return
             if source_state in (STATE_IDLE, STATE_OFF):
                 if self._manual_stop_requested:
                     # 用户明确执行 stop 后，不应触发自动恢复
@@ -392,9 +404,15 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self.before_state = None
 
     async def async_media_play(self):
+        was_manual_stop = self._manual_stop_requested
         self._manual_stop_requested = False
         self._attr_state = STATE_PLAYING
-        await self.async_call('media_play')
+        # stop 后首次播放，或外部接管结束后恢复，均优先播放本集成媒体，避免恢复到 TTS 缓存内容
+        force_owned_media = self._resume_with_owned_media or was_manual_stop
+        if force_owned_media and await self._async_resume_owned_media():
+            self._resume_with_owned_media = False
+        else:
+            await self.async_call('media_play')
         self.async_write_ha_state()  # 通知 HA 更新状态
 
     async def async_media_pause(self):
@@ -768,6 +786,10 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         await self.cloud_music.async_media_previous_track(self, self._attr_shuffle)
 
     async def async_media_seek(self, position):
+        if not self._source_supports_seek():
+            _LOGGER.debug(f"底层播放器不支持 seek，忽略请求: {position}s")
+            return
+
         # 先执行 seek 操作
         await self.async_call('media_seek', { 'seek_position': position })
         
@@ -782,6 +804,25 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
     async def async_clear_playlist(self):
         if hasattr(self, 'playlist'):
             del self.playlist
+
+    async def _async_resume_owned_media(self):
+        """恢复本集成当前媒体（避免 media_play 恢复到 TTS）。"""
+        media_content_id = getattr(self, '_attr_media_content_id', None)
+        if not media_content_id:
+            _LOGGER.debug("无本集成 media_content_id，无法恢复本集成媒体")
+            return False
+
+        self._attr_media_position = 0
+        self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+        self._last_position_update = None
+        self._is_new_track = True
+        await self.async_call('play_media', {
+            'media_content_id': media_content_id,
+            'media_content_type': 'music'
+        })
+        self._attr_state = STATE_PLAYING
+        self.before_state = None
+        return True
 
     async def _recover_playback(self):
         """幽灵播放恢复：重新发送 play_media 命令"""
@@ -804,12 +845,14 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             # 恢复完成后，尝试 seek 到之前的位置（如果播放器支持）
             # 延迟 1 秒让播放器开始播放后再 seek
             await asyncio.sleep(1)
-            if current_position > 2:
+            if current_position > 2 and self._source_supports_seek():
                 try:
                     await self.async_call('media_seek', {'seek_position': current_position})
                     _LOGGER.info(f"✅ 恢复播放并 seek 到 {current_position}s")
                 except Exception as e:
                     _LOGGER.debug(f"Seek 失败（播放器可能不支持）: {e}")
+            elif current_position > 2:
+                _LOGGER.debug("底层播放器不支持 seek，跳过恢复定位")
             
         except Exception as e:
             _LOGGER.error(f"恢复播放失败: {e}")
@@ -822,6 +865,12 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         self._recovery_in_progress = False
         self._next_track_scheduled = False
         self.before_state = None
+        self._attr_media_position = 0
+        self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+        self._last_position_update = None
+        self._is_new_track = True
+        self._expect_source_playing_until = 0.0
+        self._resume_with_owned_media = False
         self._attr_state = STATE_IDLE
         await self.async_call('media_stop')
         self.async_write_ha_state()
@@ -856,9 +905,41 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
         if new_state is not None:
             new_source_state = new_state.state
             old_source_state = old_state.state if old_state else None
+            now_monotonic = self.hass.loop.time()
+            expected_playing = now_monotonic <= self._expect_source_playing_until
             
             # 核心修复：底层从非 playing 变成 playing 时的处理
             if new_source_state == STATE_PLAYING and old_source_state != STATE_PLAYING:
+                source_media_content_id = new_state.attributes.get('media_content_id')
+                proxy_media_content_id = getattr(self, '_attr_media_content_id', None)
+                source_matches_proxy = (
+                    source_media_content_id is not None
+                    and proxy_media_content_id is not None
+                    and str(source_media_content_id) == str(proxy_media_content_id)
+                )
+                external_takeover = False
+                if not expected_playing:
+                    # 优先使用内容 ID 判断；若拿不到 ID，再回退到状态判断
+                    if source_media_content_id is not None and proxy_media_content_id is not None:
+                        external_takeover = not source_matches_proxy
+                    elif self._attr_state != STATE_PLAYING:
+                        external_takeover = True
+
+                # 若不是本集成近期触发的播放，视为外部接管（如 TTS）
+                if external_takeover:
+                    self._external_playback_active = True
+                    self._state_before_external_playback = self._attr_state
+                    self._ghost_playback_count = 0
+                    self._recovery_in_progress = False
+                    self._next_track_scheduled = False
+                    # 外部接管结束后，按“播放”应恢复本集成音频，不应恢复到 TTS
+                    self._resume_with_owned_media = self._state_before_external_playback in (STATE_PLAYING, STATE_PAUSED)
+                    _LOGGER.info(f"检测到外部接管播放，记录原代理状态: {self._state_before_external_playback}")
+                elif expected_playing and self._external_playback_active:
+                    # 本集成重新开始播放时，退出外部接管状态
+                    self._external_playback_active = False
+                    self._state_before_external_playback = STATE_IDLE
+
                 # 首先：同步代理状态为 PLAYING（避免卡在 PAUSED）
                 if self._attr_state != STATE_PLAYING:
                     _LOGGER.info(f"底层开始播放（{old_source_state} → playing），同步代理状态为 PLAYING")
@@ -887,6 +968,32 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
                     _LOGGER.info(f"底层暂停，同步代理状态为 PAUSED")
                     self._attr_state = STATE_PAUSED
                     self._attr_media_position_updated_at = datetime.datetime.now(datetime.timezone.utc)
+            elif new_source_state in (STATE_IDLE, STATE_OFF) and old_source_state == STATE_PLAYING:
+                # 外部接管播放结束：按接管前状态恢复
+                if self._external_playback_active:
+                    restore_state = self._state_before_external_playback
+                    if restore_state in (STATE_ON, None):
+                        restore_state = STATE_IDLE
+
+                    # 接管前若正在播放，TTS 结束后自动恢复本集成媒体播放
+                    if restore_state == STATE_PLAYING and getattr(self, '_attr_media_content_id', None):
+                        _LOGGER.info("外部接管播放结束，自动恢复本集成媒体播放")
+                        self._attr_state = STATE_PLAYING
+                        self._resume_with_owned_media = False
+                        self.hass.loop.call_soon_threadsafe(
+                            lambda: self.hass.create_task(self._async_resume_owned_media())
+                        )
+                    else:
+                        _LOGGER.info(f"外部接管播放结束，代理状态恢复为 {restore_state}")
+                        self._attr_state = restore_state
+
+                    self.before_state = None
+                    self._ghost_playback_count = 0
+                    self._recovery_in_progress = False
+                    self._next_track_scheduled = False
+                    self._external_playback_active = False
+                    self._state_before_external_playback = STATE_IDLE
+                    self._expect_source_playing_until = 0.0
         
         self._update_source_player_attributes()
         # 使用线程安全的方式调用 async_write_ha_state
@@ -916,9 +1023,28 @@ class CloudMusicMediaPlayer(MediaPlayerEntity):
             # 底层播放器不存在
             self._attr_available = False
 
+    def _source_supports_seek(self):
+        """检测底层播放器是否支持 seek。"""
+        source = self.media_player
+        if source is None:
+            return False
+        features = int(source.attributes.get('supported_features', 0))
+        return bool(features & int(MediaPlayerEntityFeature.SEEK))
+
     # 调用服务
-    async def async_call(self, service, service_data={}):
+    async def async_call(self, service, service_data=None):
         media_player = self.media_player
         if media_player is not None:
+            if service_data is None:
+                service_data = {}
+            else:
+                service_data = dict(service_data)
+
+            # 仅在播放相关服务后开启“预期播放”窗口，避免误判外部接管
+            if service in ('play_media', 'media_play'):
+                self._expect_source_playing_until = self.hass.loop.time() + 10
+            elif service in ('media_pause', 'media_stop'):
+                self._expect_source_playing_until = 0.0
+
             service_data.update({ 'entity_id': media_player.entity_id })
-            await self.hass.services.async_call('media_player', service, service_data)
+            await self.hass.services.async_call('media_player', service, service_data, blocking=True)
