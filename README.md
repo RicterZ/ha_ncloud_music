@@ -24,8 +24,6 @@ https://github.com/neteasecloudmusicapienhanced/api-enhanced
 
 **注意：关联媒体播放器调整为在集成选项中选择**
 
----
-
 ## 🌐 歌词全屏播放器
 
 独立的全屏歌词网页播放器，支持逐字歌词、毛玻璃背景、歌词偏移：
@@ -48,6 +46,37 @@ https://github.com/neteasecloudmusicapienhanced/api-enhanced
 
 ![搜索选择](docs/assets/search_select.png)
 
+## 🎧 Music Assistant 接入
+
+本插件支持通过 **Jellyfin** 和 **OpenSubsonic** 两种方式接入 Music Assistant。
+
+| Jellyfin 搜索效果 | OpenSubsonic 搜索效果 |
+|:---:|:---:|
+| ![Jellyfin 搜索](docs/assets/ma_jellyfin_search.png) | ![OpenSubsonic 搜索](docs/assets/ma_opensubsonic_search.png) |
+
+- **Jellyfin 接入**：更适合日常使用，歌曲封面展示更完整，歌单搜索体验也更自然。
+- **OpenSubsonic 接入**：适合兼容 Subsonic 生态客户端，在 Music Assistant 中可作为 `OpenSubsonic Media Server Library` 使用。
+
+> Music Assistant 中更推荐优先尝试 **Jellyfin** 接入；如果你同时使用 Subsonic 客户端，也可以保留 **OpenSubsonic** 方式作为补充。
+
+> OpenSubsonic 接入参数：`Base URL = 你的 HA 地址`，`Port = 8123`，`Server Path = /rest`
+
+Jellyfin 接入时，如果想快速找到收藏歌单，可以直接在全局搜索中输入“我的歌单”；OpenSubsonic 接入时则可以直接在 `Playlists` 页面看到：
+
+| Jellyfin 搜索“我的歌单” | OpenSubsonic 每日推荐 |
+|:---:|:---:|
+| ![搜索我的歌单](docs/assets/ma_jellyfin_playlist_search.png) | ![每日推荐](docs/assets/ma_opensubsonic_daily_recommendation.png) |
+
+Jellyfin 接入下，歌手页目前更适合作为专辑入口使用：
+
+| 歌手页专辑视图 | 歌手页无热门歌曲 |
+|:---:|:---:|
+| ![歌手页专辑](docs/assets/ma_jellyfin_artist_albums.png) | ![歌手页限制](docs/assets/ma_jellyfin_artist_no_tracks.png) |
+
+音质信息在 MA 播放链路中也能直接看到输入源与输出侧状态：
+
+<img src="docs/assets/ma_audio_quality_input.png" width="49%" />
+<img src="docs/assets/ma_audio_quality_output.png" width="49%" />
 
 ## 🎛️ Dashboard 实体
 
